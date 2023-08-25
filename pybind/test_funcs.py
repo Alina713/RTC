@@ -618,7 +618,13 @@ if __name__ == "__main__":
     #     "/nas/user/wyh/essential_generate/draw/10_mmtraj_SH0401.txt")
     # MMap("/nas/user/wyh/essential_generate/SH_map1.txt").diff_route("/nas/user/wyh/essential_generate/draw/diff_10_mmtraj_SH0401.txt")
 
+
     inp = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).valid_map_trajmm()
     print("分割##################")
-    print(mm.de_read(inp, "/nas/user/wyh/dataset/traj/Shanghai/20150401_cleaned_mm_trajs.txt"))
+    # print(mm.de_read(inp, "/nas/user/wyh/dataset/traj/Shanghai/20150401_cleaned_mm_trajs.txt"))
+    print(mm.avail_mm(inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt"))
     print("endd")
+    
+
+
+
