@@ -25,15 +25,11 @@ using namespace std;
 ////////////////Data structs///////////////////
 class Point {
 public:
-    void set_lon(std::double lon){this->lon = lon;}
-    void set_lat(std::double lat){this->lat = lat;}
-    void set_time(std::int time){this->time = time;}
-
     double lon;
     double lat;
     int time;
 
-//    Point() : time(-1) {}
+    Point() : time(-1) {}
 };
 
 class Road {
@@ -86,9 +82,9 @@ struct AdjNode {
 ///////////////////////The globals////////////////////
 int n = 0;
 // int m = 150000;
-//定义m->轨迹条数，暂时读2条
-// int m = 80928;
-int m = 1;
+//需修改，定义m->轨迹条数，暂时读2条
+// int m = 3;
+int m = 2;
 int k = 60000;
 // double maxLon, maxLat;
 // double minLon, minLat;
@@ -150,8 +146,10 @@ void read() {
         head->next = NULL;
         adjList.push_back(head);
     }
-    // std::ifstream file("/Users/wyh/PycharmProjects/pythonProject2/validmap_ShangHai.txt");
-    std::ifstream file("/Users/wyh/PycharmProjects/pythonProject2/diffmap_ShangHai.txt");
+    // 需修改读入的路网文件
+    // std::ifstream file("/Users/wyh/PycharmProjects/pythonProject2/a_demo/validmap_ShangHai.txt");
+    std::ifstream file("/Users/wyh/PycharmProjects/pythonProject2/a_demo/SH_map1.txt");
+    // std::ifstream file("/Users/wyh/PycharmProjects/pythonProject2/diffmap_ShangHai.txt");
     // std::ifstream file("/Users/wyh/PycharmProjects/pythonProject2/edgeOSM.txt");
     // 因为经纬度为小数所以这里应为double而不是int
     std::vector<std::vector<double> > road_info; // 创建保存数据的容器
@@ -514,6 +512,14 @@ void getCandidate(int i) {
         set<int>::iterator q;
         int row = int(y / gridSize);
         int col = int(x / gridSize);
+        if(row == 0){
+            row = 1;
+        }
+        if(col == 0){
+            col = 1;
+        }
+        // cout<<"row"<<row<<endl;
+        // cout<<"col"<<col<<endl;
         for (int r = row - 1; r <= row + 1; ++r)
             for (int c = col - 1; c <= col + 1; ++c) {
                 list<int>::iterator p;
@@ -521,7 +527,7 @@ void getCandidate(int i) {
                     if (temp.find(*p) != temp.end())
                         continue;
                     temp.insert(*p);
-                    cout<<"$ ";
+                    // cout<<"$ ";
                     // 完全没经过这里
                 }
             }
@@ -645,7 +651,7 @@ void matching_hmm() {
             } else
                 flag = false;
             in++;
-            // cout << "第" << currentTrajPointIndex << "个候选路段匹配成功" << "\n";
+            cout << "第" << currentTrajPointIndex << "个候选路段匹配成功" << "\n";
         }
         // 这一段是从最后开始倒叙输出最后的答案
         int startColumnIndex = GetIndex(scoreMatrix.back());
@@ -667,17 +673,11 @@ void matching_hmm() {
                     startColumnIndex = GetIndex(scoreMatrix[j - 1]);
             }
         }
-        // cout << "第" << i << "条路正常" << "\n";
+        cout << "第" << i << "条路正常" << "\n";
     }
 }
 
 //////////////////////////////////////////////////////////
-BOOST_PYTHON_MODULE(point)
-{
-
-}
-
-
 
 int main() {
     read();
@@ -685,7 +685,9 @@ int main() {
     matching_hmm();
     list<int>::iterator p;
     ofstream file;
-    file.open("diff_valid.txt");
+    // file.open("valid_mmtraj_20150401_ShangHai.txt");
+    // 需修改输出的mm文件名
+    file.open("diff_10_mmtraj_SH0401.txt");
     // progressbar bar(m);
     // bar.set_todo_char(" ");
     // bar.set_done_char("█");
