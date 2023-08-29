@@ -231,7 +231,7 @@ class Map:
                     # edges.append((i, j))
 
     # 将valid图进行mm
-    def valid_map_trajmm(self):
+    def valid_map_show(self):
         valid_cnt = self.valid_num()
         # 定义传入cpp中的roadnet信息为inp变量,txt中的一整行都要读入
         inp = []
@@ -241,7 +241,7 @@ class Map:
 
         return inp
         # print(type(inp))
-        # print(inp)
+        # print(len(inp))
 
     # aug后的rn进行mm
     def aug_map_trajmm(self):
@@ -261,8 +261,25 @@ class Map:
                         f.write(line)
                         break
 
-    # 第一种增强方式：p代表要删去边的百分比，取值范围为[0,1]，输出为txt
+    # 第一种增强方式：p代表要删去边的百分比，取值范围为[0,1]，暂定为15%，即0.15
+    # 原diff_map1s
+    def diff_map1_show(self, p):
+        # 输入至数组中，并传入cpp文件
+        valid_cnt = self.valid_num()
+        tmp = 1-p
+        # 定义传入cpp中的roadnet信息为inp变量,txt中的一整行都要读入
+        inp = []
+        for item in valid_cnt:
+            inp.append(self.info[item])
+
+        n = int(len(inp) * tmp)
+        diff_inp = random.sample(inp, n)
+
+        return diff_inp
+
+
     def diff_map1(self, p):
+        # ，输出为txt
         File = open("/nas/user/wyh/dataset/roadnet/Shanghai/edgeOSM.txt")
         tmp = 10*(1-p)+1
         # print(tmp)
@@ -619,10 +636,13 @@ if __name__ == "__main__":
     # MMap("/nas/user/wyh/essential_generate/SH_map1.txt").diff_route("/nas/user/wyh/essential_generate/draw/diff_10_mmtraj_SH0401.txt")
 
 
-    inp = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).valid_map_trajmm()
+    inp = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).valid_map_show()
+    # diff_inp = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).diff_map1_show(0.15)
     print("分割##################")
-    # print(mm.de_read(inp, "/nas/user/wyh/dataset/traj/Shanghai/20150401_cleaned_mm_trajs.txt"))
-    print(mm.avail_mm(inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt"))
+    # 如果不是valid将匹配为0
+    # print(mm.avail_mm(inp, "/nas/user/wyh/dataset/traj/Shanghai/20150401_cleaned_mm_trajs.txt"))
+    a = mm.avail_mm(inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    print(a)
     print("endd")
     
 
