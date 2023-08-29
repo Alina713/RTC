@@ -625,34 +625,31 @@ void matching_hmm() {
 //////////////////////////////////////////////////////////
 
 // main函数变为avail_mm
-int avail_mm(std::vector<std::vector<string>>& input, string route_trajfile) {
+std::vector<std::vector<double> > avail_mm(std::vector<std::vector<string>>& input, string route_trajfile) {
     // n这里一定一定要赋值，坑死了！！！！！！
     n = de_read(input, route_trajfile);
     gridMaking();
     matching_hmm();
-    // list<int>::iterator p;
-    ofstream file;
-    // file.open("valid_mmtraj_20150401_ShangHai.txt");
-    // 需修改输出的mm文件名
-    file.open("wanted_mm.txt");
-    // progressbar bar(m);
-    // bar.set_todo_char(" ");
-    // bar.set_done_char("█");
-    // bar.set_opening_bracket_char("{");
-    // bar.set_closing_bracket_char("}");
+    
+    std::vector<std::vector<double> > traj_ans; // 创建保存数据的容器
+
     for (int i = 0; i < m; ++i) {
-        // bar.update(i);
         for (int j = 0; j < t[i].path.size(); ++j) {
-            // cout << t[i].path[j].time << ' ' << t[i].path[j].lat << ' ' << t[i].path[j].lon << ' ' << ans[i].front() << endl;
-            file << t[i].path[j].time << ' ' << t[i].path[j].lat << ' ' << t[i].path[j].lon << ' ' << ans[i].front() << endl;
+            std::vector<double> traj_row; // 创建每一行数据的向量
+            traj_row.push_back(t[i].path[j].time);
+            traj_row.push_back(t[i].path[j].lat);
+            traj_row.push_back(t[i].path[j].lon);
+            traj_row.push_back(ans[i].front());
             ans[i].pop_front();
+            traj_ans.push_back(traj_row);
         }
         cout<<"第"<<i<<"条轨迹匹配完毕"<<endl;
-        // cout << "-" << i + 1 << endl;
-        file << "-" << i + 1 << endl;
+        double sp = (i+1) * -1;
+        std::vector<double> traj_sp;
+        traj_sp.push_back(sp);
+        traj_ans.push_back(traj_sp);
     }
-    file.close();
-    return 0;
+    return traj_ans;
 }
 
 
