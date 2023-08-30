@@ -181,6 +181,59 @@ class Map:
     #                 f.write(line)
 
     # 以dgl.graph的格式存储有效原图（暂时仅存储点边关系不涉及具体属性）
+    
+    def shortestPathAll(self, start, end=-1, with_route=False):
+        pq = PriorityQueue()
+        pq.put((0, start))
+        ans = []
+        dist = [1e18 for i in range(self.edgeNum)]
+        pred = [1e18 for i in range(self.edgeNum)]
+        dist[start] = self.edgeDis[start]
+        pred[start] = -1
+        nodeset = {}
+        ans.append(start)
+        while (pq.qsize()):
+            dis, id = pq.get()
+            if id == end:
+                break
+            if id not in nodeset:
+                nodeset[id] = 1
+            else:
+                continue
+            for nid in self.edgeDict[id]:
+                # if (nid in self.valid_edge):
+                if dist[nid] > dist[id] + self.edgeDis[nid]:
+                    dist[nid] = dist[id] + self.edgeDis[nid]
+                    pred[nid] = id
+                    pq.put((dist[nid], nid))
+        if not with_route:
+            pred = []
+        if end != -1:
+            return dist[end], pred
+        return dist, pred
+
+    def shortestPath(self, start, end, with_route=True):
+        dis, pred = self.shortestPathAll(start, end, with_route)
+
+        if end == -1:
+            return dis, pred
+
+        if with_route:
+            id = end
+            # print ('route: ')
+            arr = [id]
+            while (pred[id] >= 0 and pred[id] < 1e18):
+                #  print (pred[id],end=',')
+                id = pred[id]
+                arr.append(id)
+            arr = list(reversed(arr))
+            # 去掉首尾元素
+            new_arr = arr[1:-1]
+        #    arr = [self.valid_edge[item] for item in arr]
+            return dis, new_arr
+        else:
+            return dis
+
     def dgl_valid_map(self):
         u = []
         v = []
@@ -373,6 +426,73 @@ class Map:
         plt.plot(*line)
 
         plt.savefig('valid_sh_global_map.pdf')
+
+    def shortest_route(self, t):
+        tmp_e = -1
+        eid = []
+        n = 1
+        route_ans = []
+
+        for item in t:
+            id_time = int(item[0])
+            if id_time < 0:
+                # 保存每条轨迹至tmp_ans
+                tmp_ans = []
+                tmp_ans.append(str(self.convert2_edge_num(eid[0])))
+                length = len(eid)
+                for i in range(1,length):
+                    d, temp = self.shortestPath(eid[i-1], eid[i])
+                    for elem in temp:
+                        tmp_ans.append(str(self.convert2_edge_num(elem)))
+                    tmp_ans.append(str(self.convert2_edge_num(eid[i])))
+                route_ans.append(tmp_ans)
+                eid.clear()
+                continue
+
+            e = int(item[3])
+            e = self.convert2_valid_num(e)
+            if e != tmp_e:
+                tmp_e = e
+                eid.append(e)
+
+        return route_ans
+
+
+
+
+
+if __name__ == "__main__":
+    # maps = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range = [31.17491, 121.439492, 31.305073, 121.507001]).diffmap_appnp(0.05)
+    # maps = Map("/nas/user/wyh/dataset/roadnet/Shanghai").diffmap_appnp()
+    # new_adj = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range = [31.17491, 121.439492, 31.305073, 121.507001]).diffmap_appnp(0.08)
+    # recnt(new_adj)
+    # v_num = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).valid_num()
+    # Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).valid_num()
+    # maxid = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).maxid()
+    # print(maxid) 57253
+    # Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).diff_map()
+    # 随机删除20%的路段
+    # map1 = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    # map1.diff_map1(0.2)
+    # 测试读入编码乱的路网 重新设计一个MMap类
+
+    # 4验证合理性
+    # MMap("/nas/user/wyh/essential_generate/validmap_ShangHai.txt").route(
+    #     "/nas/user/wyh/essential_generate/draw/10_mmtraj_SH0401.txt")
+    # MMap("/nas/user/wyh/essential_generate/SH_map1.txt").diff_route("/nas/user/wyh/essential_generate/draw/diff_10_mmtraj_SH0401.txt")
+
+
+    SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    inp = SH_map.valid_map_show()
+    # diff_inp = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).diff_map1_show(0.15)
+    print("分割##################")
+    # 如果不是valid将匹配为0
+    # print(mm.avail_mm(inp, "/nas/user/wyh/dataset/traj/Shanghai/20150401_cleaned_mm_trajs.txt"))
+    a = mm.avail_mm(inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    mmtraj = SH_map.shortest_route(a)
+    print(mmtraj)
+    print("endd")
+
 
 class MMap:
     def __init__(self, dir):
@@ -614,36 +734,6 @@ class MMap:
             if e != tmp_e:
                 tmp_e = e
                 eid.append(e)
-
-if __name__ == "__main__":
-    # maps = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range = [31.17491, 121.439492, 31.305073, 121.507001]).diffmap_appnp(0.05)
-    # maps = Map("/nas/user/wyh/dataset/roadnet/Shanghai").diffmap_appnp()
-    # new_adj = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range = [31.17491, 121.439492, 31.305073, 121.507001]).diffmap_appnp(0.08)
-    # recnt(new_adj)
-    # v_num = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).valid_num()
-    # Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).valid_num()
-    # maxid = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).maxid()
-    # print(maxid) 57253
-    # Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).diff_map()
-    # 随机删除20%的路段
-    # map1 = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-    # map1.diff_map1(0.2)
-    # 测试读入编码乱的路网 重新设计一个MMap类
-
-    # 4验证合理性
-    # MMap("/nas/user/wyh/essential_generate/validmap_ShangHai.txt").route(
-    #     "/nas/user/wyh/essential_generate/draw/10_mmtraj_SH0401.txt")
-    # MMap("/nas/user/wyh/essential_generate/SH_map1.txt").diff_route("/nas/user/wyh/essential_generate/draw/diff_10_mmtraj_SH0401.txt")
-
-
-    inp = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).valid_map_show()
-    # diff_inp = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).diff_map1_show(0.15)
-    print("分割##################")
-    # 如果不是valid将匹配为0
-    # print(mm.avail_mm(inp, "/nas/user/wyh/dataset/traj/Shanghai/20150401_cleaned_mm_trajs.txt"))
-    a = mm.avail_mm(inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
-    print(a)
-    print("endd")
     
 
 
