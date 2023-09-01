@@ -23,7 +23,7 @@ from multiprocessing import Pool
 
 import torch as th
 import numpy
-# import dgl
+import dgl
 # import scipy.sparse as sp
 # from dgl.nn.pytorch.conv.appnpconv import APPNPConv
 # from scipy.linalg import fractional_matrix_power, inv
@@ -224,36 +224,20 @@ class Map:
         else:
             return dis
 
+    # G(V, E): intersection为V点，road segment为E边
     def dgl_valid_map(self):
         u = []
         v = []
         for eid in range(self.valid_edge_num):
-            for nid in self.edgeDict[eid]:
-                u.append(eid)
-                v.append(nid)
+            rsid = self.valid_to_origin[eid]
+            # a，b存放路段的起止ID
+            a, b = self.edgeNode[rsid]
+            u.append(a)
+            v.append(b)
 
         graph = dgl.graph((u, v))
         return graph
 
-    # 以dgl.graph的格式记录新生成的增强地图（增强方式随机，暂时仅存储点边关系不涉及具体属性）
-    def aug_dgl_valid_map(self, p):
-        u = []
-        v = []
-
-        tmp = 10 * (1 - p) + 1
-        # print(tmp)
-        # cnt = 0
-
-        for eid in range(self.valid_edge_num):
-            for nid in self.edgeDict[eid]:
-                # 以1-p的概率保留边
-                r = random.randint(1, 10)
-                if r < tmp:
-                    u.append(eid)
-                    v.append(nid)
-
-        graph = dgl.graph((u, v))
-        return graph
 
     # 将dgl格式的图片进行还原，将邻接关系保存至self.tmp_edgeDict & self.tmp_edgeRevDict
     def recover_dgl(self, graph_):
@@ -384,6 +368,17 @@ class Map:
 
         return route_ans
 
+        # intersection_mode
+        mmtraj_intersection_mode = []
+        for item in route_ans:
+            row = []
+            for i in item:
+                a, b = self.edgeNode[int(i)]
+                row.append((a,b))
+            mmtraj_intersection_mode.append(row)
+        return mmtraj_intersection_mode
+
+
 class diff_Map:
     def __init__(self, inp):
         self.edgeDis = []
@@ -500,6 +495,18 @@ class diff_Map:
     def b2s(self, item_id):
         return self.temp_arr[item_id]
 
+    # G(V, E): intersection为V点，road segment为E边
+    def dgl_valid_map(self):
+        u = []
+        v = []
+        for eid in range(self.edgeNum):
+            # a，b存放路段的起止ID
+            a, b = self.edgeNode[eid]
+            u.append(a)
+            v.append(b)
+
+        graph = dgl.graph((u, v))
+        return graph
     
     # start与end均为valid_id
     def shortestPathAll(self, start, end=-1, with_route=False):
@@ -585,6 +592,18 @@ class diff_Map:
 
         return route_ans
 
+        # intersection_mode
+        mmtraj_intersection_mode = []
+        for item in route_ans:
+            row = []
+            for i in item:
+                i0 = self.b2s(int(i))
+                a, b = self.edgeNode[i0]
+                row.append((a,b))
+            mmtraj_intersection_mode.append(row)
+        return mmtraj_intersection_mode
+
+
 
 
 # map为Map类数据，traj为轨迹文件路径string
@@ -603,14 +622,25 @@ def diff_mmtraj_route(diff_map, traj):
 
 if __name__ == "__main__":
     SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-    print("分割##################")
-    diff_SH_map_inp = SH_map.diff_map1_show(0.15)
-    diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    print("valid")
+    mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    print(mmtraj)
+    # print("分割##################")
+    # print("valid")
+    # mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    # print(mmtraj)
+    # print("diff")
+    # diff_SH_map_inp = SH_map.diff_map1_show(0.15)
+    # diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    # print(diff_mmtraj)
+    # ans = SH_map.dgl_valid_map()
+    # print(ans)
+
 
     # diff_SH_map = diff_Map(diff_SH_map_inp)
 
     # mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
-    print(diff_mmtraj)
+
     print("endd")
 
     # maps = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range = [31.17491, 121.439492, 31.305073, 121.507001]).diffmap_appnp(0.05)
