@@ -366,7 +366,7 @@ class Map:
                 tmp_e = e
                 eid.append(e)
 
-        return route_ans
+        # return route_ans
 
         # intersection_mode
         mmtraj_intersection_mode = []
@@ -590,7 +590,7 @@ class diff_Map:
                 tmp_e = e
                 eid.append(e)
 
-        return route_ans
+        # return route_ans
 
         # intersection_mode
         mmtraj_intersection_mode = []
@@ -625,14 +625,14 @@ if __name__ == "__main__":
     print("valid")
     mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
     print(mmtraj)
-    # print("分割##################")
+    print("分割##################")
     # print("valid")
     # mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
     # print(mmtraj)
-    # print("diff")
-    # diff_SH_map_inp = SH_map.diff_map1_show(0.15)
-    # diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
-    # print(diff_mmtraj)
+    print("diff")
+    diff_SH_map_inp = SH_map.diff_map1_show(0.15)
+    diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    print(diff_mmtraj)
     # ans = SH_map.dgl_valid_map()
     # print(ans)
 

@@ -18,6 +18,7 @@
 #include <queue>
 #include <random>
 #include <sstream>
+// #include <cstring>
 // #include "progressbar.hpp"
 
 #define PI_Divided_by_180 0.0174532925199432957694
@@ -47,12 +48,14 @@ public:
     // int wayType;
     // string wayName;
     double Len;
-} r[130000];
+// } r[130000];
+};
 
 class Traj {
 public:
     vector<Point> path;
-} t[150000];
+// } t[150000];
+};
 
 class Score {
 public:
@@ -82,7 +85,6 @@ struct AdjNode {
     int edgeId;
     AdjNode* next;
 };
-
 ///////////////////////////////////////////////////
 
 ///////////////////////The globals////////////////////
@@ -99,6 +101,8 @@ double minLat = 31.17491;
 double minLon = 121.439492;
 double maxLat = 31.305073;
 double maxLon = 121.507001;
+Road r[130000];
+Traj t[150000];
 list<set<int> > Candidates;
 list<int> ans[150000];
 map<pair<int, int>, pair<double, double> > shortestDistPair;
@@ -107,7 +111,9 @@ double gridSize;
 vector<AdjNode*> adjList;
 
 //调参区域
-static list<int> grid[5000][5000];
+// 可以不static list<int> grid[5000][5000];
+list<int> grid[5000][5000];
+
 int L = 50;
 long double BETA[31] = { 0,           0.49037673,  0.82918373,  1.24364564,  1.67079581,  2.00719298,
                          2.42513007,  2.81248831,  3.15745473,  3.52645392,  4.09511775,  4.67319795,
@@ -623,9 +629,23 @@ void matching_hmm() {
 }
 
 //////////////////////////////////////////////////////////
-
 // main函数变为avail_mm
 std::vector<std::vector<double> > avail_mm(std::vector<std::vector<string>>& input, string route_trajfile) {
+    // save_global_var
+
+
+    std::list<int> ans_tmp[150000]; // 声明一个数组，每个元素是一个std::list<int>
+    for (int i = 0; i < 150000; i++) {
+        ans_tmp[i] = std::list<int>(ans[i]); // 使用拷贝构造函数克隆ans[i]到clone[i]
+    }
+
+    int gridWidth_tmp = gridWidth;
+    int gridHeight_tmp = gridHeight;
+    double gridSize_tmp = gridSize;
+
+    std::vector<AdjNode*> adjList_tmp; // 声明一个向量，每个元素是一个AdjNode*指针
+    adjList_tmp = std::vector<AdjNode*>(adjList); // 使用拷贝构造函数克隆adjList到clone
+
     // n这里一定一定要赋值，坑死了！！！！！！
     n = de_read(input, route_trajfile);
     gridMaking();
@@ -649,7 +669,68 @@ std::vector<std::vector<double> > avail_mm(std::vector<std::vector<string>>& inp
         traj_sp.push_back(sp);
         traj_ans.push_back(traj_sp);
     }
+
+    // init_global_var
+    for (int i = 0; i < 130000; i++) {
+        r[i].path.clear(); // 调用clear()方法清空r[i].path中的所有元素
+        r[i].orgID = 0;
+        r[i].startPointId = 0;
+        r[i].endPointId = 0;
+        r[i].Len = 0.0;
+    }
+
+    for (int i = 0; i < 150000; i++) {
+        t[i].path.clear(); // 调用clear()方法清空r[i].path中的所有元素
+    }
+
+    for (int i = 0; i < 150000; i++) {
+        ans[i] = std::list<int>(ans_tmp[i]); // 使用拷贝构造函数克隆ans[i]到clone[i]
+    }
+
+    Candidates.clear();
+    shortestDistPair.clear();
+    gridWidth = gridWidth_tmp;
+    gridHeight = gridHeight_tmp;
+    gridSize = gridSize_tmp;
+
+    adjList = std::vector<AdjNode*>(adjList_tmp);
+
+    for (int i = 0; i < 5000; i++) {
+        for (int j = 0; j < 5000; j++) {
+            grid[i][j].clear(); // 调用clear()方法清空grid[i][j]中的所有元素
+        }
+    }
+
     return traj_ans;
+
+    // Road r[130000];
+    // Traj t[150000];
+    // list<int> ans[150000];
+    // map<pair<int, int>, pair<double, double> > shortestDistPair;
+    // int gridWidth, gridHeight;
+    // double gridSize;
+    // vector<AdjNode*> adjList;
+
+    //调参区域
+    // list<int> grid[5000][5000];
+
+    // error
+    // list<int> grid_tmp[5000][5000]; // 声明一个二维数组，每个元素是一个list<int>
+    // memcpy(grid_tmp, grid, sizeof(grid)); // 使用memcpy函数复制整个数组
+    // // 或者使用循环复制每个元素
+    // for (int i = 0; i < 5000; i++) {
+    //     for (int j = 0; j < 5000; j++) {
+    //         grid_tmp[i][j] = grid[i][j];
+    //     }
+    // }
+
+    // memcpy(grid, grid_tmp, sizeof(grid_tmp)); // 使用memcpy函数复制整个数组
+    // // 或者使用循环复制每个元素
+    // for (int i = 0; i < 5000; i++) {
+    //     for (int j = 0; j < 5000; j++) {
+    //         grid[i][j] = grid_tmp[i][j];
+    //     }
+    // }
 }
 
 
