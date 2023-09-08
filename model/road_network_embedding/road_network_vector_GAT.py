@@ -1,4 +1,6 @@
 import torch
+import torch.nn as nn
+import torch.optim as optim
 import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
@@ -49,70 +51,52 @@ adj = torch.from_numpy(adj).float()
 
 # 计算图的入度和出度特征
 features = compute_degree_features(G)
-# # 打印结果
-# print(features)
-# print(features.size())
 
-# 创建一个有向图，每个节点有两个特征：x和y
-G = nx.DiGraph()
-G.add_nodes_from([
-    (0, {'x': 0.1, 'y': 0.2}),
-    (1, {'x': 0.3, 'y': 0.4}),
-    (2, {'x': 0.5, 'y': 0.6}),
-    (3, {'x': 0.7, 'y': 0.8}),
-])
-G.add_edges_from([
-    (0, 1),
-    (1, 2),
-    (2, 0),
-    (2, 3),
-])
 
 # 将networkx图转换为PyTorch Geometric数据
 data = from_networkx(G)
-# 将节点特征转换为张量
-data.x = torch.tensor([[node['x'], node['y']] for node in G.nodes.values()], dtype=torch.float)
-# 将节点标签转换为张量（这里假设每个节点的标签就是它的索引）
-data.y = torch.tensor([node for node in G.nodes()], dtype=torch.long)
+data.x = features
+data.y = adj
 # 打印数据信息
 print(data)
+# Data(edge_index=[2, 9295], num_nodes=4223, x=[4223, 2], y=[4223, 4223])
 # Data(edge_index=[2, 4], x=[4, 2], y=[4])
 
-# 定义GAT模型，输入特征维度为2，输出特征维度为16，头数为8，分类层维度为4
-class GAT(torch.nn.Module):
-    def __init__(self):
+class GAT(nn.Module):
+    def __init__(self, in_channels, out_channels, heads):
         super(GAT, self).__init__()
-        self.conv1 = GATConv(2, 16, heads=8)
-        self.conv2 = GATConv(16 * 8, 4)
+        self.conv1 = GATConv(in_channels, out_channels, heads=heads)
+        self.conv2 = GATConv(out_channels * heads, out_channels, heads=heads)
 
     def forward(self, data):
-        x = F.relu(self.conv1(data.x, data.edge_index))
-        x = F.dropout(x, p=0.6, training=self.training)
-        x = self.conv2(x, data.edge_index)
-        return F.log_softmax(x, dim=1)
+        x, edge_index = data.x, data.edge_index
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.conv2(x, edge_index)
+        linear = nn.Linear(128, 4223)
+        # 将张量x送入线性层，得到[4223, 4223]维度的张量y
+        x = linear(x)
+        return x
 
-# 创建模型实例
-model = GAT()
+# 创建模型对象
+model = GAT(in_channels=2, out_channels=16, heads=8)
+
 # 定义损失函数和优化器
-criterion = torch.nn.NLLLoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+criterion = nn.MSELoss()
+optimizer = optim.Adam(model.parameters(), lr=0.01)
 
 # 训练模型
 model.train()
+o = model(data)
+# torch.Size([4223, 128])
+print(o.size())
 for epoch in range(100):
     optimizer.zero_grad()
-    out = model(data)
-    loss = criterion(out[data.y], data.y)
+    output = model(data)
+    loss = criterion(output, data.y)
     loss.backward()
     optimizer.step()
-    print(f'Epoch {epoch}, Loss: {loss.item():.4f}')
-
-# 测试模型
-model.eval()
-with torch.no_grad():
-    pred = model(data).max(dim=1)[1]
-    acc = pred.eq(data.y).sum().item() / data.num_nodes
-    print(f'Accuracy: {acc:.4f}')
+    print(f'Epoch {epoch}, Loss: {loss.item()}')
 
 
 # test_map()
