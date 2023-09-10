@@ -21,9 +21,11 @@ import os
 
 from multiprocessing import Pool
 
-import torch as th
+import torch
 import numpy
 import dgl
+import scipy
+import networkx as nx
 # import scipy.sparse as sp
 # from dgl.nn.pytorch.conv.appnpconv import APPNPConv
 # from scipy.linalg import fractional_matrix_power, inv
@@ -237,25 +239,22 @@ class Map:
 
         graph = dgl.graph((u, v))
         return graph
+    
+    def nx_valid_map(self):
+        G = self.dgl_valid_map()
+        # 将dgl.Graph对象转换为network稀疏矩阵对象，此时不用考虑映射问题
+        nx_G = dgl.to_networkx(G)
 
+        return nx_G
 
-    # 将dgl格式的图片进行还原，将邻接关系保存至self.tmp_edgeDict & self.tmp_edgeRevDict
-    def recover_dgl(self, graph_):
-        adj = sp.csr_matrix(dgl.to_scipy_sparse_matrix(graph_))
-
-        self.tmp_edgeDict = {}
-        self.tmp_edgeRevDict = {}
-        for a in range(adj.shape[0]):
-            self.tmp_edgeRevDict[a] = []
-            self.tmp_edgeDict[a] = []
-
-        for i in range(adj.shape[0]):
-            # for j in range(i, adj.shape[1]):
-            for j in range(adj.shape[1]):
-                if adj[i, j] == 1:
-                    self.tmp_edgeDict[i].append(j)
-                    self.tmp_edgeRevDict[j].append(i)
-                    # edges.append((i, j))
+    def valid_adj(self):
+        G = self.dgl_valid_map()
+        # 将dgl.Graph对象转换为network稀疏矩阵对象，此时不用考虑映射问题
+        nx_g = dgl.to_networkx(G)
+        # 使用networkx.to_numpy_matrix()函数，将一个networkx.Graph对象转换为一个numpy.ndarray对象，表示图的邻接矩阵
+        adj = nx.to_numpy_matrix(nx_g)
+        # 打印邻接矩阵
+        return adj
 
     # 将valid图进行mm
     def valid_map_show(self):
@@ -269,6 +268,25 @@ class Map:
         return inp
         # print(type(inp))
         # print(len(inp))
+
+    def v_section_mode_map(self):
+        sec_v = []
+        map = self.valid_map_show()
+        for m in map:
+            sec_v.append(int(m[1]))
+            sec_v.append(int(m[2]))
+
+        # print(sec_e)
+        return sec_v
+
+    def e_section_mode_map(self):
+        sec_e = []
+        map = self.valid_map_show()
+        for m in map:
+            sec_e.append((int(m[1]), int(m[2])))
+
+        # print(sec_e)
+        return sec_e
 
 
     # 第一种增强方式：p代表要删去边的百分比，取值范围为[0,1]，暂定为15%，即0.15
@@ -620,19 +638,40 @@ def diff_mmtraj_route(diff_map, traj):
     mmtraj = x.shortest_route(y)
     return mmtraj
 
-if __name__ == "__main__":
+# graph是一个networkx.Graph对象，表示图数据；返回一个torch.Tensor对象，shape为[n_nodes, 2]，表示每个节点的入度和出度特征向量
+def compute_degree_features(graph):
+    nodes = list(graph.nodes())
+    n_nodes = len(nodes)
+    # print(n_nodes)
+    # 初始化特征矩阵
+    features = torch.zeros(n_nodes, 2)
+    # 遍历每个节点
+    for i, node in enumerate(nodes):
+        # 计算节点的入度和出度
+        in_degree = graph.in_degree(node)
+        out_degree = graph.out_degree(node)
+        # 将入度和出度的值归一化到[0, 1]区间
+        in_degree = in_degree / (n_nodes - 1)
+        out_degree = out_degree / (n_nodes - 1)
+        # 将入度和出度的值赋给特征矩阵
+        features[i, 0] = in_degree
+        features[i, 1] = out_degree
+    # 返回特征矩阵
+    return features
+
+def test_map():
     SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-    print("valid")
-    mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
-    print(mmtraj)
-    print("分割##################")
+    a = SH_map.nx_valid_map()
+    ans = compute_degree_features(a)
+    print(ans)
     # print("valid")
     # mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
     # print(mmtraj)
-    print("diff")
-    diff_SH_map_inp = SH_map.diff_map1_show(0.15)
-    diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
-    print(diff_mmtraj)
+    # print("分割##################")
+    # print("diff")
+    # diff_SH_map_inp = SH_map.diff_map1_show(0.15)
+    # diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    # print(diff_mmtraj)
     # ans = SH_map.dgl_valid_map()
     # print(ans)
 
@@ -661,5 +700,9 @@ if __name__ == "__main__":
     # MMap("/nas/user/wyh/essential_generate/validmap_ShangHai.txt").route(
     #     "/nas/user/wyh/essential_generate/draw/10_mmtraj_SH0401.txt")
     # MMap("/nas/user/wyh/essential_generate/SH_map1.txt").diff_route("/nas/user/wyh/essential_generate/draw/diff_10_mmtraj_SH0401.txt")
+
+if __name__ == "__main__":
+    test_map()
+    pass
 
 
