@@ -26,10 +26,14 @@ import numpy
 import dgl
 import scipy
 import networkx as nx
+import folium
 # import scipy.sparse as sp
 # from dgl.nn.pytorch.conv.appnpconv import APPNPConv
 # from scipy.linalg import fractional_matrix_power, inv
 # from sklearn.preprocessing import MinMaxScaler
+
+# for folium：创建颜色列表
+colors = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'violet', 'pink', 'brown', 'black']
 
 class Map:
     def __init__(self, dir, zone_range):
@@ -356,7 +360,7 @@ class Map:
         return self.zone_range[0] <= lat and lat <= self.zone_range[2] and self.zone_range[1] <= lon and lon <= self.zone_range[3]
 
 
-    def shortest_route(self, t):
+    def shortest_route(self, t, sec_mode=True):
         tmp_e = -1
         eid = []
         n = 1
@@ -384,17 +388,35 @@ class Map:
                 tmp_e = e
                 eid.append(e)
 
-        # return route_ans
-
-        # intersection_mode
-        mmtraj_intersection_mode = []
-        for item in route_ans:
-            row = []
-            for i in item:
-                a, b = self.edgeNode[int(i)]
-                row.append((a,b))
-            mmtraj_intersection_mode.append(row)
-        return mmtraj_intersection_mode
+        if sec_mode==True:
+            # intersection_mode
+            mmtraj_intersection_mode = []
+            for item in route_ans:
+                row = []
+                for i in item:
+                    a, b = self.edgeNode[int(i)]
+                    row.append((a,b))
+                mmtraj_intersection_mode.append(row)
+            return mmtraj_intersection_mode
+        else:
+            return route_ans
+    
+    # folium画图
+    def draw_traj_on_map(self, T):
+        # zoom_start参数：缩放级别越高，地图显示的范围越小，细节越清晰
+        m = folium.Map(location=[31.2389, 121.4992], zoom_start=10)
+        for ts in T:
+            points = []
+            for t in ts:
+                item = self.info[int(t)]
+                cnt = int(item[3])
+                for n in range(cnt):
+                    points.append([float(item[4+2*n]), float(item[5+2*n])])
+            
+            # 添加轨迹线对象
+            color = random.choice(colors)
+            folium.PolyLine(points, color=color, weight=10, opacity=0.8).add_to(m)
+        m.save('../folium_figure/sh_1.html')
 
 
 class diff_Map:
@@ -427,6 +449,7 @@ class diff_Map:
         self.tmp_arr = []
         # big2small
         self.temp_arr = {}
+        self.info = inp
 
         for item_list in inp:
             self.tmp_arr.append(int(item_list[0]))
@@ -580,7 +603,7 @@ class diff_Map:
             return dis
 
 
-    def shortest_route(self, t):
+    def shortest_route(self, t, sec_mode=True):
         tmp_e = -1
         eid = []
         n = 1
@@ -608,18 +631,37 @@ class diff_Map:
                 tmp_e = e
                 eid.append(e)
 
-        # return route_ans
-
-        # intersection_mode
-        mmtraj_intersection_mode = []
-        for item in route_ans:
-            row = []
-            for i in item:
-                i0 = self.b2s(int(i))
-                a, b = self.edgeNode[i0]
-                row.append((a,b))
-            mmtraj_intersection_mode.append(row)
-        return mmtraj_intersection_mode
+        if sec_mode==True:
+            # intersection_mode
+            mmtraj_intersection_mode = []
+            for item in route_ans:
+                row = []
+                for i in item:
+                    i0 = self.b2s(int(i))
+                    a, b = self.edgeNode[i0]
+                    row.append((a,b))
+                mmtraj_intersection_mode.append(row)
+            return mmtraj_intersection_mode
+        else:
+            return route_ans
+        
+    # folium画图
+    def draw_traj_on_map(self, T):
+        # zoom_start参数：缩放级别越高，地图显示的范围越小，细节越清晰
+        m = folium.Map(location=[31.2389, 121.4992], zoom_start=10)
+        for ts in T:
+            points = []
+            for t in ts:
+                t = self.b2s(int(t))
+                item = self.info[t]
+                cnt = int(item[3])
+                for n in range(cnt):
+                    points.append([float(item[4+2*n]), float(item[5+2*n])])
+            
+            # 添加轨迹线对象
+            color = random.choice(colors)
+            folium.PolyLine(points, color=color, weight=10, opacity=0.8).add_to(m)
+        m.save('../folium_figure/diff_sh_1.html')
 
 
 
@@ -628,14 +670,16 @@ class diff_Map:
 def mmtraj_route(map, traj):
     x = map.valid_map_show()
     y = mm.avail_mm(x, traj)
-    mmtraj = map.shortest_route(y)
+    # 删去False输出路口序列
+    mmtraj = map.shortest_route(y, False)
     return mmtraj
 
 # diff_map为数组[]形式的地图（转变为为diff_Map类数据），traj为轨迹文件路径string
 def diff_mmtraj_route(diff_map, traj):
     x = diff_Map(diff_map)
     y = mm.avail_mm(diff_map, traj)
-    mmtraj = x.shortest_route(y)
+    # 删去False输出路口序列
+    mmtraj = x.shortest_route(y, False)
     return mmtraj
 
 # graph是一个networkx.Graph对象，表示图数据；返回一个torch.Tensor对象，shape为[n_nodes, 2]，表示每个节点的入度和出度特征向量
@@ -659,50 +703,36 @@ def compute_degree_features(graph):
     # 返回特征矩阵
     return features
 
+
 def test_map():
     SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-    a = SH_map.nx_valid_map()
-    ans = compute_degree_features(a)
-    print(ans)
+    # a = SH_map.nx_valid_map()
+    # ans = compute_degree_features(a)
+    # print(ans)
     # print("valid")
-    # mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    SH_map.draw_traj_on_map(mmtraj)
     # print(mmtraj)
     # print("分割##################")
     # print("diff")
-    # diff_SH_map_inp = SH_map.diff_map1_show(0.15)
-    # diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    diff_SH_map_inp = SH_map.diff_map1_show(0.15)
+    diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
     # print(diff_mmtraj)
     # ans = SH_map.dgl_valid_map()
     # print(ans)
 
 
-    # diff_SH_map = diff_Map(diff_SH_map_inp)
+    diff_SH_map = diff_Map(diff_SH_map_inp)
+    diff_SH_map.draw_traj_on_map(diff_mmtraj)
 
     # mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
 
     print("endd")
 
-    # maps = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range = [31.17491, 121.439492, 31.305073, 121.507001]).diffmap_appnp(0.05)
-    # maps = Map("/nas/user/wyh/dataset/roadnet/Shanghai").diffmap_appnp()
-    # new_adj = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range = [31.17491, 121.439492, 31.305073, 121.507001]).diffmap_appnp(0.08)
-    # recnt(new_adj)
-    # v_num = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).valid_num()
-    # Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).valid_num()
-    # maxid = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).maxid()
-    # print(maxid) 57253
-    # Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001]).diff_map()
-    # 随机删除20%的路段
-    # map1 = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-    # map1.diff_map1(0.2)
-    # 测试读入编码乱的路网 重新设计一个MMap类
-
-    # 4验证合理性
-    # MMap("/nas/user/wyh/essential_generate/validmap_ShangHai.txt").route(
-    #     "/nas/user/wyh/essential_generate/draw/10_mmtraj_SH0401.txt")
-    # MMap("/nas/user/wyh/essential_generate/SH_map1.txt").diff_route("/nas/user/wyh/essential_generate/draw/diff_10_mmtraj_SH0401.txt")
 
 if __name__ == "__main__":
     test_map()
+    # draw_traj_on_map()
     pass
 
 
