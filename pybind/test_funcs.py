@@ -27,6 +27,8 @@ import dgl
 import scipy
 import networkx as nx
 import folium
+import folium.plugins
+from rtree import index
 # import scipy.sparse as sp
 # from dgl.nn.pytorch.conv.appnpconv import APPNPConv
 # from scipy.linalg import fractional_matrix_power, inv
@@ -34,6 +36,7 @@ import folium
 
 # for folium：创建颜色列表
 colors = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'violet', 'pink', 'brown', 'black']
+# m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
 
 class Map:
     def __init__(self, dir, zone_range):
@@ -308,7 +311,66 @@ class Map:
         diff_inp = random.sample(inp, n)
 
         return diff_inp
+    
+    # 第二种增强方式：p代表要增加边的百分比，取值范围为[0,1]，暂定为10%，即0.1
+    def diff_map2_show(self, p):
+        a =self.valid_edge_num
+        add_edge_num = int(p * a)
+        f = 0
+        new_RS = []
 
+        # 创建一个空的rtree对象
+        idx = index.Index()
+
+        VM = self.valid_map_show()
+        sec_id = []
+        sec = []
+
+        for i in VM:
+            tmp = int(i[3])
+            in_sec_id = int(i[1])
+            out_sec_id = int(i[2])
+            if in_sec_id in sec_id:
+                pass
+            else:
+                sec_id.append(in_sec_id)
+                sec.append({"id": in_sec_id, "coords": (float(i[4]), float(i[5]))})
+
+
+            if out_sec_id in sec_id:
+                pass
+            else:
+                sec_id.append(out_sec_id)
+                sec.append({"id": out_sec_id, "coords": (float(i[4+(tmp-1)*2]), float(i[5+(tmp-1)*2]))})
+
+        for i in sec:
+            idx.insert(i["id"], i["coords"])
+
+        # # 创建一个线对象列表，每个线对象是一个字典，包含两个端点的id和坐标
+        # lines = []
+
+        # 遍历每个点对象
+        for i in sec:
+            if f > add_edge_num:
+                break
+            # 查询最近邻的点对象，返回结果数量为2（包括自身）
+            nearest = list(idx.nearest(i["coords"], 2))
+            
+            # 如果查询结果有两个，则说明存在最近邻的点对象（不包括自身）
+            if len(nearest) == 2:
+                # 获取最近邻的点对象的整数标识符
+                n_id = nearest[1]
+                
+                # 根据整数标识符从点对象列表中找到对应的点对象
+                n = [q for q in sec if q["id"] == n_id][0]
+
+                new_RS.append([a+f, i["id"], n["id"], 2, i["coords"][0], i["coords"][1], n["coords"][0], n["coords"][1]])
+
+                f+=1
+        
+        print(new_RS)
+        return 0
+                
 
     # 获取最大的路口编号
     def maxid(self):
@@ -404,8 +466,10 @@ class Map:
     # folium画图
     def draw_traj_on_map(self, T):
         # zoom_start参数：缩放级别越高，地图显示的范围越小，细节越清晰
-        m = folium.Map(location=[31.2389, 121.4992], zoom_start=10)
+        # m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
+        num = 0
         for ts in T:
+            m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
             points = []
             for t in ts:
                 item = self.info[int(t)]
@@ -415,8 +479,14 @@ class Map:
             
             # 添加轨迹线对象
             color = random.choice(colors)
-            folium.PolyLine(points, color=color, weight=10, opacity=0.8).add_to(m)
-        m.save('../folium_figure/sh_1.html')
+            line = folium.plugins.AntPath(points, color='brown', weight=5, opacity=0.8, pulseColor=None, delay=1000).add_to(m)
+            for i in range(len(points) - 1):
+                folium.Marker(points[i], icon=folium.Icon(color='green'), popup=f'{i}').add_to(line)
+
+            m.save('../folium_figure/sh_'+str(num)+'.html')
+            num+=1
+
+            # folium.PolyLine(points, color=color, weight=10, opacity=0.8).add_to(m)
 
 
 class diff_Map:
@@ -648,8 +718,10 @@ class diff_Map:
     # folium画图
     def draw_traj_on_map(self, T):
         # zoom_start参数：缩放级别越高，地图显示的范围越小，细节越清晰
-        m = folium.Map(location=[31.2389, 121.4992], zoom_start=10)
+        # m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
+        num = 0
         for ts in T:
+            m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
             points = []
             for t in ts:
                 t = self.b2s(int(t))
@@ -660,8 +732,15 @@ class diff_Map:
             
             # 添加轨迹线对象
             color = random.choice(colors)
-            folium.PolyLine(points, color=color, weight=10, opacity=0.8).add_to(m)
-        m.save('../folium_figure/diff_sh_1.html')
+            line = folium.plugins.AntPath(points, color='black', weight=5, opacity=0.8, pulseColor=None, delay=1000).add_to(m)
+            for i in range(len(points) - 1):
+                folium.Marker(points[i], icon=folium.Icon(color='green'), popup=f'{i}').add_to(line)
+
+            m.save('../folium_figure/diff_sh_'+str(num)+'.html')
+            num+=1
+
+            # folium.PolyLine(points, color=color, weight=10, opacity=0.8).add_to(m)
+        # m.save('../folium_figure/diff_sh_1.html')
 
 
 
@@ -713,8 +792,8 @@ def test_map():
     mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
     SH_map.draw_traj_on_map(mmtraj)
     # print(mmtraj)
-    # print("分割##################")
-    # print("diff")
+    print("分割##################")
+    print("diff")
     diff_SH_map_inp = SH_map.diff_map1_show(0.15)
     diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
     # print(diff_mmtraj)
@@ -726,13 +805,41 @@ def test_map():
     diff_SH_map.draw_traj_on_map(diff_mmtraj)
 
     # mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
-
+    # m.save('../folium_figure/sh_con.html')
     print("endd")
 
 
 if __name__ == "__main__":
-    test_map()
+    # test_map()
     # draw_traj_on_map()
-    pass
+    SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    SH_map.diff_map2_show(0.1)
+    # pass
+
+
+# 导入folium库
+# import folium
+
+# # 创建地图对象
+# m = folium.Map(location=[39.9042, 116.4074], zoom_start=5)
+
+# # 轨迹点数据
+# points = [
+#     [39.9042, 116.4074], # 北京
+#     [34.3416, 108.9398], # 西安
+#     [30.6586, 104.0648], # 成都
+#     [31.2304, 121.4737]  # 上海
+# ]
+
+# # 添加轨迹线对象
+# line = folium.PolyLine(points, color='red', weight=3, opacity=0.8).add_to(m)
+
+# # 在轨迹线的起点和终点添加标记
+# folium.Marker(points[0], icon=folium.Icon(color='green'), popup='北京').add_to(line)
+# folium.Marker(points[-1], icon=folium.Icon(color='blue'), popup='上海').add_to(line)
+
+# # 显示地图
+# m
+
 
 
