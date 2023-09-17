@@ -368,8 +368,7 @@ class Map:
 
                 f+=1
         
-        print(new_RS)
-        return 0
+        return new_RS
                 
 
     # 获取最大的路口编号
@@ -785,35 +784,49 @@ def compute_degree_features(graph):
 
 def test_map():
     SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-    # a = SH_map.nx_valid_map()
-    # ans = compute_degree_features(a)
-    # print(ans)
+
     # print("valid")
-    mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
-    SH_map.draw_traj_on_map(mmtraj)
-    # print(mmtraj)
-    print("分割##################")
-    print("diff")
-    diff_SH_map_inp = SH_map.diff_map1_show(0.15)
-    diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
-    # print(diff_mmtraj)
-    # ans = SH_map.dgl_valid_map()
-    # print(ans)
-
-
-    diff_SH_map = diff_Map(diff_SH_map_inp)
-    diff_SH_map.draw_traj_on_map(diff_mmtraj)
-
     # mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
-    # m.save('../folium_figure/sh_con.html')
+    # SH_map.draw_traj_on_map(mmtraj)
+
+    # print("分割##################")
+    # print("diff")
+    diff_SH_map_inp = SH_map.diff_map1_show(0.15)
+    # diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+
+
+
+    # diff_SH_map = diff_Map(diff_SH_map_inp)
+    # diff_SH_map.draw_traj_on_map(diff_mmtraj)
+
+    # SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    new_map = SH_map.diff_map2_show(0.1)
+    # print(new_map)
+
+
+    m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
+    for j in diff_SH_map_inp:
+        cnt = int(j[3])
+        points = []
+        for n in range(cnt):
+            points.append([float(j[4+2*n]), float(j[5+2*n])])
+
+        line = folium.PolyLine(points, color='black', weight=10, opacity=0.8).add_to(m)
+
+
+    for i in new_map:
+        points = []
+        points.append([i[4], i[5]])
+        points.append([i[6], i[7]])
+        line = folium.PolyLine(points, color='red', weight=10, opacity=0.5).add_to(m)
+    m.save('new_map_adddemo.html')
+
     print("endd")
 
 
 if __name__ == "__main__":
-    # test_map()
+    test_map()
     # draw_traj_on_map()
-    SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-    SH_map.diff_map2_show(0.1)
     # pass
 
 
