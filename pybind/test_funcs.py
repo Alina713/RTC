@@ -364,11 +364,14 @@ class Map:
                 # 根据整数标识符从点对象列表中找到对应的点对象
                 n = [q for q in sec if q["id"] == n_id][0]
 
-                new_RS.append([a+f, i["id"], n["id"], 2, i["coords"][0], i["coords"][1], n["coords"][0], n["coords"][1]])
+                new_RS.append((str(a+f), str(i["id"]), str(n["id"]), str(2), str(i["coords"][0]), str(i["coords"][1]), str(n["coords"][0]), str(n["coords"][1])))
 
                 f+=1
         
-        return new_RS
+        # return new_RS
+        diff_map2_inp = VM + new_RS
+
+        return diff_map2_inp
                 
 
     # 获取最大的路口编号
@@ -735,7 +738,7 @@ class diff_Map:
             for i in range(len(points) - 1):
                 folium.Marker(points[i], icon=folium.Icon(color='green'), popup=f'{i}').add_to(line)
 
-            m.save('../folium_figure/diff_sh_'+str(num)+'.html')
+            m.save('../folium_figure/new_sh_'+str(num)+'.html')
             num+=1
 
             # folium.PolyLine(points, color=color, weight=10, opacity=0.8).add_to(m)
@@ -758,7 +761,7 @@ def diff_mmtraj_route(diff_map, traj):
     y = mm.avail_mm(diff_map, traj)
     # 删去False输出路口序列
     mmtraj = x.shortest_route(y, False)
-    return mmtraj
+    return mmtraj, x
 
 # graph是一个networkx.Graph对象，表示图数据；返回一个torch.Tensor对象，shape为[n_nodes, 2]，表示每个节点的入度和出度特征向量
 def compute_degree_features(graph):
@@ -791,7 +794,7 @@ def test_map():
 
     # print("分割##################")
     # print("diff")
-    diff_SH_map_inp = SH_map.diff_map1_show(0.15)
+    # diff_SH_map_inp = SH_map.diff_map1_show(0.15)
     # diff_mmtraj = diff_mmtraj_route(diff_SH_map_inp, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
 
 
@@ -801,25 +804,11 @@ def test_map():
 
     # SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
     new_map = SH_map.diff_map2_show(0.1)
-    # print(new_map)
+
+    new_mmtraj, new_SH_map= diff_mmtraj_route(new_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    new_SH_map.draw_traj_on_map(new_mmtraj)
 
 
-    m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
-    for j in diff_SH_map_inp:
-        cnt = int(j[3])
-        points = []
-        for n in range(cnt):
-            points.append([float(j[4+2*n]), float(j[5+2*n])])
-
-        line = folium.PolyLine(points, color='black', weight=10, opacity=0.8).add_to(m)
-
-
-    for i in new_map:
-        points = []
-        points.append([i[4], i[5]])
-        points.append([i[6], i[7]])
-        line = folium.PolyLine(points, color='red', weight=10, opacity=0.5).add_to(m)
-    m.save('new_map_adddemo.html')
 
     print("endd")
 
