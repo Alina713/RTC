@@ -312,7 +312,7 @@ class Map:
 
         return diff_inp
     
-    # 第二种增强方式：p代表要增加边的百分比，取值范围为[0,1]，暂定为10%，即0.1
+    # 第二种增强方式：p代表要增加边的百分比，取值范围为[0,1]，暂定为10%，即0.1，但未考虑图的连通性
     def diff_map2_show(self, p):
         a =self.valid_edge_num
         add_edge_num = int(p * a)
@@ -372,6 +372,82 @@ class Map:
         diff_map2_inp = VM + new_RS
 
         return diff_map2_inp
+    
+    # 第三种增强方式：使用噪声图加法对图进行扰动，考虑图的连通性
+    def diff_map3_show(self):
+        diff_RS = []
+        a =self.edgeNum
+        f = 0
+
+        VM = self.valid_map_show()
+        sec_id = []
+        sec = []
+
+        for i in VM:
+            tmp = int(i[3])
+            in_sec_id = int(i[1])
+            out_sec_id = int(i[2])
+            if in_sec_id in sec_id:
+                pass
+            else:
+                sec_id.append(in_sec_id)
+                sec.append({"id": in_sec_id, "coords": (float(i[4]), float(i[5]))})
+
+
+            if out_sec_id in sec_id:
+                pass
+            else:
+                sec_id.append(out_sec_id)
+                sec.append({"id": out_sec_id, "coords": (float(i[4+(tmp-1)*2]), float(i[5+(tmp-1)*2]))})
+
+        # print("sec_init_done")
+
+        G = self.nx_valid_map()
+        # 根据原图的度分布生成一个噪声图
+        l = len(G.nodes())
+
+        p = np.array(list(dict(G.degree()).values())) / l # 每个节点的度数占总度数的比例
+        Q_ = nx.fast_gnp_random_graph(l, p.mean(), directed=True) # 生成一个随机有向图，每条边的存在概率为平均度数比例
+        Q = nx.MultiDiGraph(Q_)
+
+        # 将原图与噪声图相加，得到一个扰动后的图
+        H = nx.compose(G, Q) # 合并两个图，相同的边只保留一条
+
+        edges = H.edges()
+        edges_list = list(edges)
+        # 输出：[(1, 2), (1, 4), (2, 3), (3, 4)]
+
+        # print("newmap_init_done")
+        # print(len(edges_list))
+        # 27929
+
+        # 迭代EdgeView对象，得到每一条边的起点和终点
+        for e in edges_list:
+            if e in self.edgeNode:
+                v = self.edgeNode.index(e)
+                diff_RS.append(self.info[v])
+                # print(e)
+            else:
+                flag = False
+                for i in sec:
+                    # print(i)
+                    if e[0] == i["id"]:
+                        # print("find")
+                        in_id = str(i["id"])
+                        in_x = str(i["coords"][0])
+                        in_y = str(i["coords"][1])
+                        for n in sec:
+                            if e[1] == n["id"]:
+                                diff_RS.append((str(a+f), in_id, str(n["id"]), str(2), in_x, in_y, str(n["coords"][0]), str(n["coords"][1])))
+                                f+=1
+                                flag = True
+                                break
+                        if flag:
+                            print("f=", f)
+                            break
+
+        
+        return diff_RS
                 
 
     # 获取最大的路口编号
@@ -738,7 +814,7 @@ class diff_Map:
             for i in range(len(points) - 1):
                 folium.Marker(points[i], icon=folium.Icon(color='green'), popup=f'{i}').add_to(line)
 
-            m.save('../folium_figure/new_sh_'+str(num)+'.html')
+            m.save('../folium_figure/new_2_sh_'+str(num)+'.html')
             num+=1
 
             # folium.PolyLine(points, color=color, weight=10, opacity=0.8).add_to(m)
@@ -803,7 +879,10 @@ def test_map():
     # diff_SH_map.draw_traj_on_map(diff_mmtraj)
 
     # SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-    new_map = SH_map.diff_map2_show(0.1)
+    # new_map = SH_map.diff_map2_show(0.1)
+
+    new_map = SH_map.diff_map3_show()
+    print(len(new_map))
 
     new_mmtraj, new_SH_map= diff_mmtraj_route(new_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
     new_SH_map.draw_traj_on_map(new_mmtraj)
