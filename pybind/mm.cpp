@@ -93,7 +93,7 @@ int n = 0;
 // int m = 150000;
 //需修改，定义m->轨迹条数，暂时读2条
 // int m = 3;
-int m = 2;
+int m = 10;
 int k = 60000;
 // double maxLon, maxLat;
 // double minLon, minLat;
@@ -102,9 +102,9 @@ double minLon = 121.439492;
 double maxLat = 31.305073;
 double maxLon = 121.507001;
 Road r[130000];
-Traj t[150000];
+Traj t[300000];
 list<set<int> > Candidates;
-list<int> ans[150000];
+list<int> ans[300000];
 map<pair<int, int>, pair<double, double> > shortestDistPair;
 int gridWidth, gridHeight;
 double gridSize;
@@ -148,7 +148,7 @@ double RoadLength(int i) {
     return length;
 }
 
-int de_read(std::vector<std::vector<string>>& input, string route_trajfile) {
+int de_read(std::vector<std::vector<string>>& input, std::vector<std::vector<std::vector<string>>>& traj_input) {
     //初始化AdjList
     for (int i = 0; i < k; ++i) {
         AdjNode* head = new AdjNode();
@@ -158,6 +158,9 @@ int de_read(std::vector<std::vector<string>>& input, string route_trajfile) {
     }
     // 路网行数 相当于原来的n
     int rows = input.size();
+    // 一般来说traj_rows与m一致
+    int traj_rows = traj_input.size();
+    cout<<"traj_rows = "<<traj_rows<<endl;
 
     // Read in roads保存于r[i]中
     for (int i = 0; i < rows; ++i) {
@@ -196,37 +199,13 @@ int de_read(std::vector<std::vector<string>>& input, string route_trajfile) {
     // cout<<"lat: "<<r[0].path[0].lat<<endl;
 
     // Read in Trajs
-    std::ifstream trajfile(route_trajfile);
-    // 因为经纬度为小数所以这里应为double而不是int
-    std::vector<std::vector<double> > traj_info; // 创建保存数据的容器
-    if (trajfile.is_open()) { // 判断文件是否成功打开
-        std::string line;
-        while (getline(trajfile, line)) { // 读取文件的每一行
-            std::istringstream ss(line); // 创建字符串流，用于分离每个整数
-            std::vector<double> roww; // 创建每一行数据的向量
-            double num;
-            while (ss >> num) { // 将每个整数从字符串中提取并添加到行向量中
-                roww.push_back(num);
-            }
-            traj_info.push_back(roww);
-        }
-        trajfile.close(); // 关闭文件
-    } else {
-        std::cout << "无法打开轨迹文件。" << std::endl;
-    }
-
-    int j = 0;
     for (int i = 0; i < m; ++i) {
-        while (1) {
-            int time;
-            time = int(traj_info[j][0]);
-            if (time <= m){
-                j++;
-                break;
-            }
+        int traj_row = traj_input[i].size();
+        for(int j = 0; j < traj_row; ++j){
+            int time = std::stoi(traj_input[i][j][0]);
             double x, y;
-            x = traj_info[j][1];
-            y = traj_info[j][2];
+            x = std::stod(traj_input[i][j][1]);
+            y = std::stod(traj_input[i][j][2]);
             Point* p = new Point();
             p->lat = x;
             p->lon = y;
@@ -630,12 +609,12 @@ void matching_hmm() {
 
 //////////////////////////////////////////////////////////
 // main函数变为avail_mm
-std::vector<std::vector<double> > avail_mm(std::vector<std::vector<string>>& input, string route_trajfile) {
+std::vector<std::vector<double> > avail_mm(std::vector<std::vector<string>>& input, std::vector<std::vector<std::vector<string>>>& traj_input) {
     // save_global_var
 
 
-    std::list<int> ans_tmp[150000]; // 声明一个数组，每个元素是一个std::list<int>
-    for (int i = 0; i < 150000; i++) {
+    std::list<int> ans_tmp[300000]; // 声明一个数组，每个元素是一个std::list<int>
+    for (int i = 0; i < 300000; i++) {
         ans_tmp[i] = std::list<int>(ans[i]); // 使用拷贝构造函数克隆ans[i]到clone[i]
     }
 
@@ -647,7 +626,7 @@ std::vector<std::vector<double> > avail_mm(std::vector<std::vector<string>>& inp
     adjList_tmp = std::vector<AdjNode*>(adjList); // 使用拷贝构造函数克隆adjList到clone
 
     // n这里一定一定要赋值，坑死了！！！！！！
-    n = de_read(input, route_trajfile);
+    n = de_read(input, traj_input);
     gridMaking();
     matching_hmm();
     
@@ -679,11 +658,11 @@ std::vector<std::vector<double> > avail_mm(std::vector<std::vector<string>>& inp
         r[i].Len = 0.0;
     }
 
-    for (int i = 0; i < 150000; i++) {
+    for (int i = 0; i < 300000; i++) {
         t[i].path.clear(); // 调用clear()方法清空r[i].path中的所有元素
     }
 
-    for (int i = 0; i < 150000; i++) {
+    for (int i = 0; i < 300000; i++) {
         ans[i] = std::list<int>(ans_tmp[i]); // 使用拷贝构造函数克隆ans[i]到clone[i]
     }
 
@@ -702,35 +681,6 @@ std::vector<std::vector<double> > avail_mm(std::vector<std::vector<string>>& inp
     }
 
     return traj_ans;
-
-    // Road r[130000];
-    // Traj t[150000];
-    // list<int> ans[150000];
-    // map<pair<int, int>, pair<double, double> > shortestDistPair;
-    // int gridWidth, gridHeight;
-    // double gridSize;
-    // vector<AdjNode*> adjList;
-
-    //调参区域
-    // list<int> grid[5000][5000];
-
-    // error
-    // list<int> grid_tmp[5000][5000]; // 声明一个二维数组，每个元素是一个list<int>
-    // memcpy(grid_tmp, grid, sizeof(grid)); // 使用memcpy函数复制整个数组
-    // // 或者使用循环复制每个元素
-    // for (int i = 0; i < 5000; i++) {
-    //     for (int j = 0; j < 5000; j++) {
-    //         grid_tmp[i][j] = grid[i][j];
-    //     }
-    // }
-
-    // memcpy(grid, grid_tmp, sizeof(grid_tmp)); // 使用memcpy函数复制整个数组
-    // // 或者使用循环复制每个元素
-    // for (int i = 0; i < 5000; i++) {
-    //     for (int j = 0; j < 5000; j++) {
-    //         grid[i][j] = grid_tmp[i][j];
-    //     }
-    // }
 }
 
 
