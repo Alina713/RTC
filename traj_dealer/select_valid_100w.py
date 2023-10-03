@@ -5,6 +5,8 @@ MINLAT = 31.17491
 MINLON = 121.439492
 MAXLAT = 31.305073
 MAXLON = 121.507001
+Maxnum = 1000000
+# Maxnum = 10
 
 class Traj:
     def __init__(self, PATH):
@@ -38,10 +40,15 @@ if __name__ == "__main__":
 
     n = 0
     file_num = 1
-    while(file_num < 10):
-        print(file_num)
+    ch = 0
 
-        filename = '2015040'+str(file_num)+'_cleaned_mm_trajs.txt'
+    while(file_num < 31):
+        # print(file_num)
+        if file_num < 10:
+            filename = '2015040'+str(file_num)+'_cleaned_mm_trajs.txt'
+        else:
+            filename = '201504'+str(file_num)+'_cleaned_mm_trajs.txt'
+            
         traj_path = os.path.join(file_path, filename)
 
         traj = Traj(traj_path).get_traj()
@@ -68,23 +75,26 @@ if __name__ == "__main__":
             if flag[a] == 0:
                 continue
             else:
-                for b in range(len(traj[a])):
-                    with open("/nas/user/wyh/pre_contrastive/valid_traj_ShangHai.txt", 'a') as f:
-                        f.write(traj[a][b][0] + ' ' + traj[a][b][1] + ' ' + traj[a][b][2] + ' ' + traj[a][b][3] + '\n')
+                with open("/nas/user/wyh/TNC/traj_dealer/100w_valid_traj_ShangHai.txt", 'a') as f:
+                    f.write(str(traj[a]))
 
-            with open("/nas/user/wyh/pre_contrastive/valid_traj_ShangHai.txt", 'a') as f:
+                # for b in range(len(traj[a])):
+                #     with open("/nas/user/wyh/TNC/traj_data_pro_dealer/valid_traj_ShangHai.txt", 'a') as f:
+                #         f.write(traj[a][b][0] + ' ' + traj[a][b][1] + ' ' + traj[a][b][2] + ' ' + traj[a][b][3] + '\n')
+
+            with open("/nas/user/wyh/TNC/traj_dealer/100w_valid_traj_ShangHai.txt", 'a') as f:
                 n = n + 1
-                f.write('-' + str(n) + '\n')
+                f.write('\n'+'-' + str(n) + '\n')
+                if n>Maxnum-1:
+                    ch = 1
+                    print("file_num = ", file_num)
+                    break
+
+        if ch:
+            break
+
 
             # print(traj[i][j][1])
             # breakpoint()
 
         file_num = file_num + 1
-
-
-
-
-
-
-
-
