@@ -93,7 +93,7 @@ int n = 0;
 // int m = 150000;
 //需修改，定义m->轨迹条数，暂时读2条
 // int m = 3;
-int m = 10;
+int m = 30000;
 int k = 60000;
 // double maxLon, maxLat;
 // double minLon, minLat;
@@ -215,6 +215,7 @@ int de_read(std::vector<std::vector<string>>& input, std::vector<std::vector<std
         }
     }
 
+    cout<<"read completed!"<<endl;
     return rows;
 }
 
@@ -603,7 +604,7 @@ void matching_hmm() {
                     startColumnIndex = GetIndex(scoreMatrix[j - 1]);
             }
         }
-        // cout << "第" << i << "条路正常" << "\n";
+        cout << "第" << i << "条路正常" << "\n";
     }
 }
 
@@ -625,6 +626,7 @@ std::vector<std::vector<double> > avail_mm(std::vector<std::vector<string>>& inp
     std::vector<AdjNode*> adjList_tmp; // 声明一个向量，每个元素是一个AdjNode*指针
     adjList_tmp = std::vector<AdjNode*>(adjList); // 使用拷贝构造函数克隆adjList到clone
 
+    cout<<"Strart read in"<<endl;
     // n这里一定一定要赋值，坑死了！！！！！！
     n = de_read(input, traj_input);
     gridMaking();

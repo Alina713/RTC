@@ -1,4 +1,5 @@
 import mm
+import ast
 import math
 from queue import PriorityQueue, Queue
 import numpy as np
@@ -22,7 +23,6 @@ import os
 from multiprocessing import Pool
 
 import torch
-import numpy
 import dgl
 import scipy
 import networkx as nx
@@ -275,6 +275,7 @@ class Map:
         return inp
         # print(type(inp))
         # print(len(inp))
+        # [('121238', '57252', '57253', '2', '31.1841042', '121.452009', '31.1859025', '121.4541695'), ('121239', '57253', '57252', '2', '31.1859025', '121.4541695', '31.1841042', '121.452009')]
 
     def v_section_mode_map(self):
         sec_v = []
@@ -312,7 +313,7 @@ class Map:
 
         return diff_inp
     
-    # 第二种增强方式：p代表要增加边的百分比，取值范围为[0,1]，暂定为10%，即0.1，但未考虑图的连通性
+    # 第二种增强方式：p代表要增加边的百分比，取值范围为[0,1]，暂定为10%，即0.1，但未考虑图的连通性（感觉上肯定连通）
     def diff_map2_show(self, p):
         a =self.valid_edge_num
         add_edge_num = int(p * a)
@@ -373,7 +374,7 @@ class Map:
 
         return diff_map2_inp
     
-    # 第三种增强方式：使用噪声图加法对图进行扰动，考虑图的连通性
+    # 第三种增强方式：使用噪声图加法对图进行扰动，考虑图的连通性，效果并不好
     def diff_map3_show(self):
         diff_RS = []
         a =self.edgeNum
@@ -401,6 +402,8 @@ class Map:
                 sec.append({"id": out_sec_id, "coords": (float(i[4+(tmp-1)*2]), float(i[5+(tmp-1)*2]))})
 
         # print("sec_init_done")
+        # print(sec)
+        # return 0
 
         G = self.nx_valid_map()
         # 根据原图的度分布生成一个噪声图
@@ -415,11 +418,7 @@ class Map:
 
         edges = H.edges()
         edges_list = list(edges)
-        # 输出：[(1, 2), (1, 4), (2, 3), (3, 4)]
 
-        # print("newmap_init_done")
-        # print(len(edges_list))
-        # 27929
 
         # 迭代EdgeView对象，得到每一条边的起点和终点
         for e in edges_list:
@@ -506,7 +505,9 @@ class Map:
         n = 1
         route_ans = []
 
-        for item in t:
+        print("最短路补全开始")
+
+        for item in tqdm(t):
             id_time = int(item[0])
             if id_time < 0:
                 # 保存每条轨迹至tmp_ans
@@ -519,14 +520,16 @@ class Map:
                         tmp_ans.append(str(self.convert2_edge_num(elem)))
                     tmp_ans.append(str(self.convert2_edge_num(eid[i])))
                 route_ans.append(tmp_ans)
-                eid.clear()
+                eid = []
+                tmp_e = -1 
                 continue
 
             e = int(item[3])
-            e = self.convert2_valid_num(e)
-            if e != tmp_e:
-                tmp_e = e
-                eid.append(e)
+            if e!=0:
+                e = self.convert2_valid_num(e)
+                if e != tmp_e:
+                    tmp_e = e
+                    eid.append(e)
 
         if sec_mode==True:
             # intersection_mode
@@ -770,7 +773,8 @@ class diff_Map:
                         tmp_ans.append(str(self.s2b(elem)))
                     tmp_ans.append(str(self.s2b(eid[i])))
                 route_ans.append(tmp_ans)
-                eid.clear()
+                eid = []
+                tmp_e = -1
                 continue
 
             e = int(item[3])
@@ -824,11 +828,11 @@ class diff_Map:
 
 
 # map为Map类数据，traj为轨迹文件路径string
-def mmtraj_route(map, traj):
+def mmtraj_route(map, traj, T = True):
     x = map.valid_map_show()
     y = mm.avail_mm(x, traj)
     # 删去False输出路口序列
-    mmtraj = map.shortest_route(y, False)
+    mmtraj = map.shortest_route(y, T)
     return mmtraj
 
 # diff_map为数组[]形式的地图（转变为为diff_Map类数据），traj为轨迹文件路径string
@@ -860,12 +864,105 @@ def compute_degree_features(graph):
     # 返回特征矩阵
     return features
 
+# r 为traj_file_route，e.g."/nas/user/wyh/TNC/traj_dealer/valid_traj_ShangHai.txt"
+def traj_inp(r):
+    traj_inp = []
+    trajFile = open(r)
+
+    for line in trajFile.readlines():
+        str_data = line.strip()
+        list_data = ast.literal_eval(str_data)
+        if type(list_data)==int:
+            continue
+        else:
+            traj_inp.append(list_data)
+
+    # print(len(traj_inp))
+    # [[['1', '1.1', '1.2', '123'], ['1', '1.1', '1.2', '123']],   [['1', '1.1', '1.2', '123'], ['1', '1.1', '1.2', '123']]]
+            
+    return traj_inp
+    
+def data_process():
+    n = 0
+    SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    trajinp = traj_inp("/nas/user/wyh/TNC/traj_dealer/30w_valid_traj_ShangHai.txt")
+    mmtrajs = mmtraj_route(SH_map, trajinp)
+    
+    for mmtraj in tqdm(mmtrajs):
+        n+=1
+        if n>240000:
+            print("val", n)
+            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_val.txt", 'a') as f:
+                if n>240001:
+                    f.write('\n')
+                for sec_pair in mmtraj:
+                    for sec in sec_pair:
+                        f.write(str(sec) + ' ')
+
+        elif n>210000:
+            print("test", n)
+            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_test.txt", 'a') as f:
+                if n>210001:
+                    f.write('\n')
+                for sec_pair in mmtraj:
+                    for sec in sec_pair:
+                        f.write(str(sec) + ' ')
+
+        else:
+            print("train", n)
+            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_train.txt", 'a') as f:
+                if n>1:
+                    f.write('\n')
+                for sec_pair in mmtraj:
+                    for sec in sec_pair:
+                        f.write(str(sec) + ' ')
+
+    print("finish")
+    return 0
 
 def test_map():
+    # m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
     SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    # print(SH_map.valid_map_show())
+    trajinp = traj_inp("/nas/user/wyh/TNC/traj_dealer/30w_valid_traj_ShangHai.txt")
+    x = SH_map.valid_map_show()
+    y = mm.avail_mm(x, trajinp)
+    tmp_e = -1
+    eid = []
+    n = 1
+    tmp_ans = []
+    FLAG = 0
+
+    print("写入txt开始")
+    for item in tqdm(y):
+        id_time = int(item[0])
+        if id_time < 0:
+            # 保存每条轨迹至tmp_ans
+            if FLAG:
+                tmp_ans.append(eid)
+                FLAG = 0
+
+            # eid.clear() 不可以用，原来的还需要改
+            eid = []
+            tmp_e = -1
+            continue
+
+        e = int(item[3])
+        if e == 0:
+            FLAG = 1
+        if e != tmp_e:
+            tmp_e = e
+            eid.append(e)
+
+    print(tmp_ans)
+    print(len(tmp_ans))
 
     # print("valid")
     # mmtraj = mmtraj_route(SH_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    # mmtraj = mmtraj_route(SH_map, trajinp)
+    # print(mmtraj)
+    # mmtraj = mmtraj_route(SH_map, trajinp)
+    # print(mmtraj)
     # SH_map.draw_traj_on_map(mmtraj)
 
     # print("分割##################")
@@ -881,11 +978,11 @@ def test_map():
     # SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
     # new_map = SH_map.diff_map2_show(0.1)
 
-    new_map = SH_map.diff_map3_show()
-    print(len(new_map))
+    # new_map = SH_map.diff_map3_show()
+    # print(len(new_map))
 
-    new_mmtraj, new_SH_map= diff_mmtraj_route(new_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
-    new_SH_map.draw_traj_on_map(new_mmtraj)
+    # new_mmtraj, new_SH_map= diff_mmtraj_route(new_map, "/nas/user/wyh/TNC/data/validtraj_20150401_ShangHai.txt")
+    # new_SH_map.draw_traj_on_map(new_mmtraj)
 
 
 
@@ -893,9 +990,12 @@ def test_map():
 
 
 if __name__ == "__main__":
-    test_map()
+    # print(traj_inp("/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt"))
+    # test_map()
     # draw_traj_on_map()
     # pass
+
+    data_process()
 
 
 # 导入folium库
@@ -922,5 +1022,23 @@ if __name__ == "__main__":
 # # 显示地图
 # m
 
+    # new_map = SH_map.diff_map3_show()
+    # for item in new_map:
+    #     points = []
+    #     cnt = int(item[3])
+    #     for n in range(cnt):
+    #         points.append([float(item[4+2*n]), float(item[5+2*n])])
 
+    #     folium.PolyLine(points, color='red', weight=10, opacity=0.3).add_to(m)
+
+    # m.save('/show_map_folium/new_map3.html')
+
+
+    # for item in SH_map.valid_map_show():
+    #     points = []
+    #     cnt = int(item[3])
+    #     for n in range(cnt):
+    #         points.append([float(item[4+2*n]), float(item[5+2*n])])
+
+    #     folium.PolyLine(points, color='black', weight=10, opacity=0.9).add_to(m)
 
