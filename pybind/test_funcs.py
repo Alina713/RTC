@@ -886,36 +886,48 @@ def data_process():
     n = 0
     SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
     trajinp = traj_inp("/nas/user/wyh/TNC/traj_dealer/30w_valid_traj_ShangHai.txt")
-    mmtrajs = mmtraj_route(SH_map, trajinp)
-    
+    # mmtrajs = mmtraj_route(SH_map, trajinp, False)
+
+    x = SH_map.valid_map_show()
+    mmtrajs = mm.avail_mm(x, trajinp)
+
     for mmtraj in tqdm(mmtrajs):
         n+=1
-        if n>240000:
-            print("val", n)
-            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_val.txt", 'a') as f_val:
-                if n>240001:
-                    f_val.write('\n')
-                for sec_pair in mmtraj:
-                    for sec in sec_pair:
-                        f_val.write(str(sec) + ' ')
+        with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_traj.txt", 'a') as f:
+            for item in mmtraj:
+                f.write(str(item) + ' ')
+            if n>0:
+                f.write('\n')
 
-        elif n>210000:
-            print("test", n)
-            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_test.txt", 'a') as f_test:
-                if n>210001:
-                    f_test.write('\n')
-                for sec_pair in mmtraj:
-                    for sec in sec_pair:
-                        f_test.write(str(sec) + ' ')
+    
+    # for mmtraj in tqdm(mmtrajs):
+    #     n+=1
+    #     if n>240000:
+    #         print("val", n)
+    #         with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_val.txt", 'a') as f_val:
+    #             if n>240001:
+    #                 f_val.write('\n')
+    #             for sec_pair in mmtraj:
+    #                 for sec in sec_pair:
+    #                     f_val.write(str(sec) + ' ')
 
-        else:
-            print("train", n)
-            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_train.txt", 'a') as f_train:
-                if n>1:
-                    f_train.write('\n')
-                for sec_pair in mmtraj:
-                    for sec in sec_pair:
-                        f_train.write(str(sec) + ' ')
+    #     elif n>210000:
+    #         print("test", n)
+    #         with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_test.txt", 'a') as f_test:
+    #             if n>210001:
+    #                 f_test.write('\n')
+    #             for sec_pair in mmtraj:
+    #                 for sec in sec_pair:
+    #                     f_test.write(str(sec) + ' ')
+
+    #     else:
+    #         print("train", n)
+    #         with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_train.txt", 'a') as f_train:
+    #             if n>1:
+    #                 f_train.write('\n')
+    #             for sec_pair in mmtraj:
+    #                 for sec in sec_pair:
+    #                     f_train.write(str(sec) + ' ')
 
     print("finish")
     return 0
