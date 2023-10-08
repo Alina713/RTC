@@ -93,7 +93,7 @@ int n = 0;
 // int m = 150000;
 //需修改，定义m->轨迹条数，暂时读2条
 // int m = 3;
-int m = 30000;
+int m = 300000;
 int k = 60000;
 // double maxLon, maxLat;
 // double minLon, minLat;

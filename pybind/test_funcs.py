@@ -892,30 +892,30 @@ def data_process():
         n+=1
         if n>240000:
             print("val", n)
-            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_val.txt", 'a') as f:
+            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_val.txt", 'a') as f_val:
                 if n>240001:
-                    f.write('\n')
+                    f_val.write('\n')
                 for sec_pair in mmtraj:
                     for sec in sec_pair:
-                        f.write(str(sec) + ' ')
+                        f_val.write(str(sec) + ' ')
 
         elif n>210000:
             print("test", n)
-            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_test.txt", 'a') as f:
+            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_test.txt", 'a') as f_test:
                 if n>210001:
-                    f.write('\n')
+                    f_test.write('\n')
                 for sec_pair in mmtraj:
                     for sec in sec_pair:
-                        f.write(str(sec) + ' ')
+                        f_test.write(str(sec) + ' ')
 
         else:
             print("train", n)
-            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_train.txt", 'a') as f:
+            with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_train.txt", 'a') as f_train:
                 if n>1:
-                    f.write('\n')
+                    f_train.write('\n')
                 for sec_pair in mmtraj:
                     for sec in sec_pair:
-                        f.write(str(sec) + ' ')
+                        f_train.write(str(sec) + ' ')
 
     print("finish")
     return 0
