@@ -92,7 +92,7 @@ struct AdjNode {
 int n = 0;
 // int m = 150000;
 //需修改，定义m->轨迹条数，暂时读2条
-int m = 1;
+int m = 5;
 // int m = 300000;
 int k = 60000;
 // double maxLon, maxLat;
@@ -629,7 +629,9 @@ std::vector<std::vector<double> > avail_mm(std::vector<std::vector<string>>& inp
     // n这里一定一定要赋值，坑死了！！！！！！
     n = de_read(input, traj_input);
     gridMaking();
+    cout<<"gridmake"<<endl;
     matching_hmm();
+    cout<<"matching"<<endl;
     
     std::vector<std::vector<double> > traj_ans; // 创建保存数据的容器
 
