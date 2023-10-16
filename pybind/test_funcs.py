@@ -512,24 +512,32 @@ class Map:
             if id_time < 0:
                 # 保存每条轨迹至tmp_ans
                 tmp_ans = []
-                tmp_ans.append(str(self.convert2_edge_num(eid[0])))
-                length = len(eid)
-                for i in range(1,length):
-                    d, temp = self.shortestPath(eid[i-1], eid[i])
-                    for elem in temp:
-                        tmp_ans.append(str(self.convert2_edge_num(elem)))
-                    tmp_ans.append(str(self.convert2_edge_num(eid[i])))
+                if len(eid) > 1:
+                    tmp_ans.append(str(self.convert2_edge_num(eid[0])))
+                    length = len(eid)
+                    for i in range(1,length):
+                        if eid[i] != -2:
+                            d, temp = self.shortestPath(eid[i-1], eid[i])
+                            for elem in temp:
+                                tmp_ans.append(str(self.convert2_edge_num(elem)))
+                            tmp_ans.append(str(self.convert2_edge_num(eid[i])))
+                        else:
+                            tmp_ans.append(-999)
+
                 route_ans.append(tmp_ans)
                 eid = []
                 tmp_e = -1 
                 continue
 
             e = int(item[3])
+            # 匹配路段为0的情况
             if e!=0:
                 e = self.convert2_valid_num(e)
-                if e != tmp_e:
-                    tmp_e = e
-                    eid.append(e)
+            else:
+                e = -2
+            if e != tmp_e:
+                tmp_e = e
+                eid.append(e)
 
         if sec_mode==True:
             # intersection_mode
@@ -1228,10 +1236,9 @@ def data_process():
 
 def test_map():
     # m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
-    # SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
     # print(SH_map.valid_map_show())
     # trajinp0 = traj_inp("/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt")
-    SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.429492, 31.305073, 121.507001])
 
     trajinp = traj_inp0("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/1_traj_test.txt")
 
