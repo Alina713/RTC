@@ -523,6 +523,8 @@ class Map:
                             tmp_ans.append(str(self.convert2_edge_num(eid[i])))
                         else:
                             tmp_ans.append(-999)
+                else:
+                    tmp_ans.append(-999)
 
                 route_ans.append(tmp_ans)
                 eid = []
@@ -576,6 +578,14 @@ class Map:
             num+=1
 
             # folium.PolyLine(points, color=color, weight=10, opacity=0.8).add_to(m)
+
+    def rs2sec(self, rs_id):
+        if rs_id >= 0:
+            a, b = self.edgeNode[rs_id]
+        else:
+            a = -999
+            b = -999
+        return a, b
 
 
 class diff_Map:
@@ -1240,22 +1250,22 @@ def test_map():
     # print(SH_map.valid_map_show())
     # trajinp0 = traj_inp("/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt")
 
-    trajinp = traj_inp0("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/1_traj_test.txt")
+    # trajinp = traj_inp0("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/1_traj_test.txt")
 
-    x = SH_map.valid_map_show()
-    mmtrajs = mm.avail_mm(x, trajinp)
+    # x = SH_map.valid_map_show()
+    # mmtrajs = mm.avail_mm(x, trajinp)
 
-    # # print(trajinp)
+    # # # print(trajinp)
 
-    for mmtraj in tqdm(mmtrajs):
-        with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/5_traj.txt", 'a') as f:
-            for item in mmtraj:
-                f.write(str(item) + ' ')
-            f.write('\n')
+    # for mmtraj in tqdm(mmtrajs):
+    #     with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/5_traj.txt", 'a') as f:
+    #         for item in mmtraj:
+    #             f.write(str(item) + ' ')
+    #         f.write('\n')
 
 
-    traj_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/5_traj.txt"  
-    route_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/1_route.txt" 
+    traj_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_traj.txt"  
+    route_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/new_30w_route.txt" 
     generate_route_file(SH_map, traj_file_path, route_file_path)
 
 
