@@ -65,6 +65,7 @@ def in_road_time(traj, route):
     traj_len = len(traj)
     route_time = {}
     route_end_time = {}
+    route_time_list = []
 
     for i in range(traj_len):
         rid = traj[i][-1]
@@ -88,16 +89,14 @@ def in_road_time(traj, route):
                     right += 1
                 if route[right] != -999:
                     # 用线性插值的方法
-                    route_time[rid] = (cid - left - 1) / (right - left - 1) * (route_time[route[right]] - route_end_time[route[left]]) + route_end_time[route[left]]
+                    tmp = (cid - left - 1) / (right - left - 1) * (route_time[route[right]] - route_end_time[route[left]]) + route_end_time[route[left]]
+                    route_time_list.append(int(tmp + traj[0][0]))
             else:
                 left = cid
-
-    route_time_list = []
-    for rid in route:
-        if rid != -999:
-            route_time_list.append(int(route_time[rid] + traj[0][0]))
+                route_time_list.append(int(route_time[rid] + traj[0][0]))
         else:
             route_time_list.append(-999)
+
     # return route_time_list
     # print(route_time_list)
     return route_time_list
@@ -109,13 +108,6 @@ def output_traj(trajs, edges, out_file_path, map, sec_mode = True):
         for traj, edge in zip(trajs, edges):
             # 指示器
             print("id = ", id)
-            traj_len = len(traj)
-            end_time = -999
-            FLAG = 0
-            for i in range(traj_len):
-                rid = traj[i][-1]
-                if rid != -999:
-                    end_time = traj[i][0]
 
             sec_id = 0
             a = []
@@ -132,15 +124,18 @@ def output_traj(trajs, edges, out_file_path, map, sec_mode = True):
                         a.append(map.edgeNode[r][1])
                         b.append(t)
                 else:
-                    FLAG = 1
+                    # FLAG = 1
+                    if len(a) != 0:
+                        a.pop()
                     a.append(-999)
                     b.append(-999)
                 sec_id += 1
 
-            if end_time != -999 and FLAG==0:
-                b.append(end_time)
+            if a.pop() == -999:
+                a.append(-999)
 
-            # print(len(a), len(b))
+
+            print(len(a), len(b))
             out_file_path.write(';'.join([
                 str(id), str(a), str(b), '0', '0', '1', get_day(create_datetime(traj[0][0]))
                 ]))
@@ -153,7 +148,7 @@ def output_traj(trajs, edges, out_file_path, map, sec_mode = True):
             # print(id)
             a = [int(_) for _ in edge]
             b = [int(_) for _ in in_road_time(traj, edge)]
-            # print(len(a), len(b))
+            print(len(a), len(b))
             out_file_path.write(';'.join([
                 str(id), str(a), str(b), '0', '0', '1', get_day(create_datetime(traj[0][0]))
                 ]))
@@ -180,7 +175,11 @@ valid_edges = edges[int(MAX * 0.7):int(MAX * 0.8)]
 test_edges = edges[int(MAX * 0.8):MAX]
 
 
-output_traj(train_trajs, train_edges, open( "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/SHmap_test.csv", 'w+'), SH_map, True)
+# output_traj(train_trajs, train_edges, open( "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/test.csv", 'w+'), SH_map, True)
+# output_traj(train_trajs, train_edges, open( "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/SHmap_train.csv", 'w+'), SH_map, True)
+output_traj(valid_trajs, valid_edges, open( "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/SHmap_valid.csv", 'w+'), SH_map, True)
+output_traj(test_trajs, test_edges, open( "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/SHmap_test.csv", 'w+'), SH_map, True)
+# output_traj(trajs, edges, open( "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/new_r_test.csv", 'w+'), SH_map, False)
 
 # def output_trajs(trajs, edges, file):
 #     file.write('id;path;tlist;usr_id;traj_id;vflag;start_time\n')
