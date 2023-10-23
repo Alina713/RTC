@@ -36,6 +36,8 @@ from rtree import index
 
 # for folium：创建颜色列表
 colors = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'violet', 'pink', 'brown', 'black']
+# global dfs_time
+dfs_time = 0 # 时间戳
 # m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
 
 class Map:
@@ -297,22 +299,83 @@ class Map:
         return sec_e
 
 
-    # 第一种增强方式：p代表要删去边的百分比，取值范围为[0,1]，暂定为15%，即0.15
+    # 第一种增强方式：p代表要删去边的百分比，取值范围为[0,1]，暂定为15%，即0.15（TODO：不可删除割边）
     # 原diff_map1s
     def diff_map1_show(self, p):
-        # 输入至数组中，并传入cpp文件
+        bridge_edge = self.find_bridge()
+        # 记录为割边的valid_num
+        bridge_edge_Num = []
+
+        for e in bridge_edge:
+            edgeNum = self.nodeEdgeDict[e[0]]
+            for item in edgeNum:
+                if item in self.nodeEdgeRevDict[e[1]]:
+                    bridge_edge_Num.append(item)
+
         valid_cnt = self.valid_num()
+        non_bridge_cnt = []
+        for v in valid_cnt:
+            if v in bridge_edge_Num:
+                continue
+            else:
+                non_bridge_cnt.append(v)
+
+        # 非割边删除
         tmp = 1-p
+        n = int(len(valid_cnt) * tmp)
+        assert n<len(non_bridge_cnt), "check diff_map1!"
+        remain_non_bridge_num = random.sample(non_bridge_cnt, n)
+
+        diff_map_num = bridge_edge_Num + remain_non_bridge_num
+        # 升序排列
+        diff_map_num.sort()
+
         # 定义传入cpp中的roadnet信息为inp变量,txt中的一整行都要读入
-        inp = []
-        for item in valid_cnt:
-            inp.append(self.info[item])
-
-        n = int(len(inp) * tmp)
-        diff_inp = random.sample(inp, n)
-
+        diff_inp = []
+        for item in diff_map_num:
+            diff_inp.append(self.info[item])
+            
         return diff_inp
     
+    def find_bridge(self):
+        g = self.dgl_valid_map()
+        # 定义DFS算法中用到的变量
+        low = [0] * g.num_nodes() # 每个节点能够回溯到的最早的祖先节点的时间戳
+        disc = [-1] * g.num_nodes() # 每个节点被发现的时间戳
+        parent = [-1] * g.num_nodes() # 每个节点的父节点
+        bridge = [] # 桥边列表
+
+        # 定义DFS算法
+        def dfs(u):
+            global dfs_time
+            # 标记当前节点已被发现，并记录时间戳
+            disc[u] = dfs_time
+            low[u] = dfs_time
+            dfs_time += 1
+            # 遍历当前节点的所有邻居节点
+            for v in g.successors(u).tolist():
+                # 如果邻居节点未被发现，则将当前节点作为其父节点，并继续DFS
+                if disc[v] == -1:
+                    parent[v] = u
+                    dfs(v)
+                    # 回溯时更新当前节点能够回溯到的最早祖先节点的时间戳
+                    low[u] = min(low[u], low[v])
+                    # 如果当前节点能够回溯到的最早祖先节点的时间戳小于邻居节点被发现的时间戳，则说明当前节点和邻居节点之间是桥边
+                    if low[v] > disc[u]:
+                        bridge.append((u, v))
+                # 如果邻居节点已被发现，且不是当前节点的父节点，则更新当前节点能够回溯到的最早祖先节点的时间戳
+                elif v != parent[u]:
+                    low[u] = min(low[u], disc[v])
+
+        # 对图中的每个节点执行DFS算法，找出所有的桥边
+        for i in range(g.num_nodes()):
+            if disc[i] == -1:
+                dfs(i)
+
+        for b in bridge:
+            pass
+        return bridge
+
     # 第二种增强方式：p代表要增加边的百分比，取值范围为[0,1]，暂定为10%，即0.1，但未考虑图的连通性（感觉上肯定连通）
     def diff_map2_show(self, p):
         a =self.valid_edge_num
@@ -1190,6 +1253,7 @@ def test_traj(r):
             traj_.append([tsmp, lat, lon, rid])
 
     return traj_
+
     
 def data_process():
     n = 0
@@ -1247,6 +1311,7 @@ def data_process():
 def test_map():
     # m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
     SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    print(SH_map.diff_map1_show(0.2))
     # print(SH_map.valid_map_show())
     # trajinp0 = traj_inp("/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt")
 
@@ -1264,9 +1329,9 @@ def test_map():
     #         f.write('\n')
 
 
-    traj_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_traj.txt"  
-    route_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/new_30w_route.txt" 
-    generate_route_file(SH_map, traj_file_path, route_file_path)
+    # traj_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_traj.txt"  
+    # route_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/new_30w_route.txt" 
+    # generate_route_file(SH_map, traj_file_path, route_file_path)
 
 
     print("endd")
