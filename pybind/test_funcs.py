@@ -334,7 +334,11 @@ class Map:
         diff_inp = []
         for item in diff_map_num:
             diff_inp.append(self.info[item])
-            
+
+        # 可重复调用
+        global dfs_time
+        dfs_time = 0
+
         return diff_inp
     
     def find_bridge(self):
@@ -372,8 +376,6 @@ class Map:
             if disc[i] == -1:
                 dfs(i)
 
-        for b in bridge:
-            pass
         return bridge
 
     # 第二种增强方式：p代表要增加边的百分比，取值范围为[0,1]，暂定为10%，即0.1，但未考虑图的连通性（感觉上肯定连通）
