@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import ast
 import tqdm
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 # 设置设备为CPU或GPU，如果有CUDA可用的话
 device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
@@ -29,20 +30,22 @@ class LSTM(nn.Module):
         # 只取最后一个时间步的输出，通过全连接层得到预测值
         out = self.fc(out[:, -1, :])
         return out
+    
+
 
 # 设置超参数
 input_size = 1 # 输入特征维度，例如经度、纬度、速度、方向
 output_size = 1 # 输出特征维度，例如行程时间
 hidden_size = 64 # 隐藏层大小
 num_layers = 2 # LSTM层数
-num_epochs = 5 # 训练轮数
+num_epochs = 8 # 训练轮数
 batch_size = 32 # 批次大小
 learning_rate = 0.01 # 学习率
 
 
 # 加载轨迹数据集，假设已经分好了训练集和测试集，并保存为csv文件
 train_data = pd.read_csv("/nas/user/wyh/TNC/data/ETA/SHmap_train.csv", sep=';', header=0)
-valid_data =  pd.read_csv("/nas/user/wyh/TNC/data/ETA/SHmap_valid.csv", sep=';', header=0)
+valid_data = pd.read_csv("/nas/user/wyh/TNC/data/ETA/SHmap_valid.csv", sep=';', header=0)
 test_data = pd.read_csv("/nas/user/wyh/TNC/data/ETA/SHmap_test.csv", sep=';', header=0)
 
 # 将字符串转换为数字列表，并计算每个序列的长度
@@ -51,6 +54,8 @@ train_time_data = [list(map(int, x.strip('[]').split(','))) for x in train_data.
 # 有-999的情况出现
 train_times_data = []
 for x in train_time_data:
+    if len(x)>128:
+        x = x[:128]
     if x[0] == -999:
         train_times_data.append(0)
     elif x[-1]== -999:
@@ -62,6 +67,15 @@ lengths = [len(x) for x in train_data.iloc[:,1].values]
 # 使用-999填充到相同长度，并转换为Tensor
 max_len = max(lengths)
 train_trajectory_data = [x + [-999] * (max_len - len(x)) for x in train_trajectory_data]
+# 归一化train_times_data
+train_times_data = np.array(train_times_data)
+train_times_data = (train_times_data - train_times_data.min()) / (train_times_data.max() - train_times_data.min())
+train_times_data = train_times_data.tolist()
+# print(train_times_data)
+# # 断点语句
+# l=1
+# assert l==0, "error"
+
 
 X_train = torch.tensor(train_trajectory_data).float()
 X_train = torch.narrow(X_train, dim=1, start=0, length=128).to(device)
@@ -73,6 +87,8 @@ valid_trajectory_data = [list(map(int, x.strip('[]').split(','))) for x in valid
 valid_time_data = [list(map(int, x.strip('[]').split(','))) for x in valid_data.iloc[:, 2].values]
 valid_times_data = []
 for x in valid_time_data:
+    if len(x)>128:
+        x = x[:128]
     if x[0] == -999:
         valid_times_data.append(0)
     elif x[-1]== -999:
@@ -83,6 +99,10 @@ lengths = [len(x) for x in valid_data.iloc[:,1].values]
 # 使用-999填充到相同长度，并转换为Tensor
 max_len = max(lengths)
 valid_trajectory_data = [x + [-999] * (max_len - len(x)) for x in valid_trajectory_data]
+# 归一化valid_times_data
+valid_times_data = np.array(valid_times_data)
+valid_times_data = (valid_times_data - valid_times_data.min()) / (valid_times_data.max() - valid_times_data.min())
+valid_times_data = valid_times_data.tolist()
 
 X_valid = torch.tensor(valid_trajectory_data).float()
 X_valid = torch.narrow(X_valid, dim=1, start=0, length=128).to(device)
@@ -93,6 +113,8 @@ test_trajectory_data = [list(map(int, x.strip('[]').split(','))) for x in test_d
 test_time_data = [list(map(int, x.strip('[]').split(','))) for x in test_data.iloc[:, 2].values]
 test_times_data = []
 for x in test_time_data:
+    if len(x)>128:
+        x = x[:128]
     if x[0] == -999:
         test_times_data.append(0)
     elif x[-1]== -999:
@@ -103,6 +125,11 @@ lengths = [len(x) for x in test_data.iloc[:,1].values]
 # 使用-999填充到相同长度，并转换为Tensor
 max_len = max(lengths)
 test_trajectory_data = [x + [-999] * (max_len - len(x)) for x in test_trajectory_data]
+# 归一化test_times_data
+test_times_data = np.array(test_times_data)
+test_times_data = (test_times_data - test_times_data.min()) / (test_times_data.max() - test_times_data.min())
+test_times_data = test_times_data.tolist()
+
 
 X_test = torch.tensor(test_trajectory_data).float()
 X_test = torch.narrow(X_test, dim=1, start=0, length=128).to(device)
@@ -153,13 +180,12 @@ for epoch in range(num_epochs):
         inputs = inputs.reshape(-1, inputs.size(1), input_size)
         # print(inputs)
         targets = targets.reshape(-1, output_size)
+        # print(targets)
 
         # 前向传播
         outputs = model(inputs)
-        print(outputs)
-        # 断点语句
-        l=1
-        assert l==0, "error"
+        # print(outputs)
+        # assert 2==1,"stop"
         loss = criterion(outputs, targets)
 
         # 反向传播和优化
