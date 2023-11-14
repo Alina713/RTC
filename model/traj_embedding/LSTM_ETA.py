@@ -5,6 +5,7 @@ import pandas as pd
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
 import time
 from torch.utils.data import DataLoader
+import tqdm
 
 # 数据预处理
 train_data = pd.read_csv("/nas/user/wyh/TNC/data/ETA/SHmap_train.csv", sep=';', header=0)
@@ -77,7 +78,6 @@ class ETADataset:
         return route, torch.tensor(travel_time)
 
 
-
 class RouteLSTMTimePred(nn.Module):
 
     def __init__(self, hidden_size=64):
@@ -89,21 +89,109 @@ class RouteLSTMTimePred(nn.Module):
         self.model = nn.LSTM(hidden_size=hidden_size, input_size=hidden_size, batch_first=True)
 
     def forward(self, route_input, travel_time):
-        route_input = route_input.cuda()
+        route_input = route_input.long().cuda()
         route_input_embeds = self.route_embeddings(route_input)
         travel_time = travel_time.cuda()
-        input_embed = torch.tensor(route_input_embeds).cuda()
+        # input_embed = torch.tensor(route_input_embeds).cuda()
 
         h0 = torch.zeros(1, route_input_embeds.size()[0], self.hidden_size).cuda()
         c0 = torch.zeros(1, route_input_embeds.size()[0], self.hidden_size).cuda()
 
-        outputs,_ = self.model(input_embed, (h0,c0))
+        outputs,_ = self.model(route_input_embeds, (h0,c0))
 
-        route_time_pred = self.time_mapping(outputs)
+        route_time_pred = self.time_mapping(outputs).squeeze(-1)
 
         mape_loss = torch.abs(route_time_pred.sum(1) - travel_time) / (travel_time + 1e-9)
         mae_loss = torch.abs(route_time_pred.sum(1) - travel_time)
+        # print(self.route_embeddings.weight.data[0])
         return mape_loss.mean(), mae_loss.mean()
+
+class RouteLSTMTimePred_train():
+
+    def __init__(self):
+        train_dataset = ETADataset(route_data = train_trajectory_data, time_data = train_times_data)
+        valid_dataset = ETADataset(route_data = valid_trajectory_data, time_data = valid_times_data)
+        test_dataset = ETADataset(route_data = test_trajectory_data, time_data = test_times_data)
+        self.train_loader = DataLoader(train_dataset, batch_size=64,
+                                    collate_fn=train_dataset.collate_fn,
+                                    pin_memory=True)
+        self.valid_loader = DataLoader(valid_dataset, batch_size=64,
+                                    collate_fn=valid_dataset.collate_fn,
+                                    pin_memory=True)
+        self.test_loader = DataLoader(test_dataset, batch_size=64,
+                                    collate_fn=test_dataset.collate_fn,
+                                    pin_memory=True)
+
+
+        self.eta_model = RouteLSTMTimePred().cuda()
+        self.optimizer = torch.optim.Adam(self.eta_model.parameters(), lr=0.01)
+
+        self.min_dict = {}
+        self.min_dict['min_valid_mape'] = 1e18
+        self.min_dict['min_valid_mae'] = 1e18
+
+
+    def train(self):
+        self.eta_model.train()
+        iter = 0
+        for input in tdqm.tqdm(self.train_loader):
+            mape_loss, mae_loss = self.eta_model(*input)
+            self.optimizer.zero_grad()
+            mape_loss.backward()
+            self.optimizer.step()
+            if ((iter + 1) % 100 == 0):
+                valid_mape, valid_mae = self.valid()
+                if self.min_dict['min_valid_mape'] > valid_mape:
+                    self.min_dict['min_valid_mape'] = valid_mape
+                    self.min_dict['min_valid_mae'] = valid_mae
+                    if not os.path.exists('./model/eta/'):
+                        os.mkdir('./model/eta/')
+                    torch.save({
+                        'model': self.eta_model.state_dict(),
+                        'best_loss': valid_mape,
+                        'opt': self.optimizer,
+                    }, './model/eta/model.pth.tar')
+
+                self.eta_model.train()
+            if (iter + 1) % 100 == 0:
+                print('mape: ', mape_loss.item(), 'mae: ', mae_loss.item(), 'valid mape: ', self.min_dict['min_valid_mape'], ' valid mae: ',self.min_dict['min_valid_mae'])
+            iter += 1
+
+    def valid(self):
+        with torch.no_grad():
+            self.eta_model.eval()
+            avg_mape = 0
+            avg_mae = 0
+            avg_cnt = 0
+            for input in tqdm.tqdm(self.valid_loader):
+                mape, mae = self.eta_model(*input)
+                avg_mape += mape.item()
+                avg_mae += mae.item()
+                avg_cnt += 1
+
+            print ('valid mape: ', avg_mape / avg_cnt, ' valid mae: ',avg_mae / avg_cnt)
+        return avg_mape / avg_cnt, avg_mae / avg_cnt
+
+
+    def test(self):
+
+        checkpoint = torch.load('./model/%s_%s_eta/model.pth.tar' % (self.args.train_city, self.args.model_name))
+        self.eta_model.load_state_dict(checkpoint['model'])
+
+        with torch.no_grad():
+            self.eta_model.eval()
+            avg_mape = 0
+            avg_mae = 0
+            avg_cnt = 0
+            for input in tqdm(self.test_loader):
+                mape, mae = self.eta_model(*input)
+                avg_mape += mape.item()
+                avg_mae += mae.item()
+                avg_cnt += 1
+
+            print('test mape: ', avg_mape / avg_cnt, ' test mae: ', avg_mae / avg_cnt)
+
+        return avg_mape / avg_cnt, avg_mae / avg_cnt
 
 
 if __name__ == '__main__':
@@ -112,7 +200,17 @@ if __name__ == '__main__':
     train_loader = DataLoader(train_dataset, batch_size=64,
                                   collate_fn=train_dataset.collate_fn,
                                   pin_memory=True)
-    for input in train_loader:
-        mape_loss, mae_loss = eta_model(*input)
-        print(mape_loss, mae_loss)
-        break
+    
+    num_epochs = 8 # 训练轮数
+    learning_rate = 0.03 # 学习率
+    optimizer = torch.optim.Adam(eta_model.parameters(), lr=learning_rate)
+    
+    for epoch in range(num_epochs):
+        eta_model.train()
+        for input in tqdm.tqdm(train_loader):
+            mape_loss, mae_loss = eta_model(*input)
+            mape_loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            eta_model.train()
+        print(f"Epoch {epoch+1}, Train mape_Loss: {mape_loss.item():.4f}, Train map_loss: {mae_loss.item():.4f}")
