@@ -335,10 +335,11 @@ class Map:
         for item in diff_map_num:
             diff_inp.append(self.info[item])
 
+        # print(diff_inp[0])
         # 可重复调用
         global dfs_time
         dfs_time = 0
-
+        # return 0
         return diff_inp
     
     def find_bridge(self):
@@ -907,6 +908,185 @@ class diff_Map:
             # folium.PolyLine(points, color=color, weight=10, opacity=0.8).add_to(m)
         # m.save('../folium_figure/diff_sh_1.html')
 
+
+
+# map为Map类数据，traj为轨迹文件路径string, 现在变为traj_inp格式
+def mmtraj_route(map, traj, T = True):
+    x = map.valid_map_show()
+    y = mm.avail_mm(x, traj)
+    # 删去False输出路口序列
+    mmtraj = map.shortest_route(y, T)
+    return mmtraj
+
+# map为Map类数据，traj_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_traj.txt"  
+#  route_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_route.txt" 
+# 生成route文件
+def generate_route_file(map, traj_file_path, route_file_path): 
+    mmtrajs = map.shortest_route(test_traj(traj_file_path), False)
+
+    for mmtraj in tqdm(mmtrajs):
+        with open(route_file_path, 'a') as f:
+            for item in mmtraj:
+                f.write(str(item) + ' ')
+            f.write('\n')
+
+# diff_map为数组[]形式的地图（转变为为diff_Map类数据），traj为轨迹文件路径string, 现在变为traj_inp格式
+def diff_mmtraj_route(diff_map, traj):
+    x = diff_Map(diff_map)
+    y = mm.avail_mm(diff_map, traj)
+    # 删去False输出路口序列
+    mmtraj = x.shortest_route(y, False)
+    return mmtraj
+
+# graph是一个networkx.Graph对象，表示图数据；返回一个torch.Tensor对象，shape为[n_nodes, 2]，表示每个节点的入度和出度特征向量
+def compute_degree_features(graph):
+    nodes = list(graph.nodes())
+    n_nodes = len(nodes)
+    # print(n_nodes)
+    # 初始化特征矩阵
+    features = torch.zeros(n_nodes, 2)
+    # 遍历每个节点
+    for i, node in enumerate(nodes):
+        # 计算节点的入度和出度
+        in_degree = graph.in_degree(node)
+        out_degree = graph.out_degree(node)
+        # 将入度和出度的值归一化到[0, 1]区间
+        in_degree = in_degree / (n_nodes - 1)
+        out_degree = out_degree / (n_nodes - 1)
+        # 将入度和出度的值赋给特征矩阵
+        features[i, 0] = in_degree
+        features[i, 1] = out_degree
+    # 返回特征矩阵
+    return features
+
+# r 为traj_file_route，e.g."/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt"
+def traj_inp(r):
+    traj_inp = []
+    trajFile = open(r)
+
+    for line in trajFile.readlines():
+        str_data = line.strip()
+        list_data = ast.literal_eval(str_data)
+        if type(list_data)==int:
+            continue
+        else:
+            traj_inp.append(list_data)
+
+    # print(len(traj_inp))
+    # [[['1', '1.1', '1.2', '123'], ['1', '1.1', '1.2', '123']],   [['1', '1.1', '1.2', '123'], ['1', '1.1', '1.2', '123']]]
+            
+    return traj_inp
+
+# 文件r格式："/nas/user/wyh/TNC/traj_dealer/30w_section_mode/error_30w_traj.txt"
+def traj_inp0(r):
+    traj_inp = []
+    traj_ = []
+    traj_path = open(r)
+
+    for line in traj_path.readlines():
+        item_list = line.strip().split()
+        if len(item_list) <= 1:
+            traj_inp.append(traj_)
+            traj_ = []
+            continue
+        else:
+            tsmp = str(int(float(item_list[0])))
+            lat = item_list[1]
+            lon = item_list[2]
+            rid = item_list[3]
+            traj_.append([tsmp, lat, lon, rid])
+
+
+    return traj_inp
+
+
+def test_traj(r):
+    traj_ = []
+    traj_path = open(r)
+    for line in traj_path.readlines():
+        item_list = line.strip().split()
+        if len(item_list) <= 1:
+            traj_.append([int(float(item_list[0]))])
+            continue
+        else:
+            tsmp = int(float(item_list[0]))
+            lat = float(item_list[1])
+            lon = float(item_list[2])
+            rid = int(float(item_list[3]))
+            traj_.append([tsmp, lat, lon, rid])
+
+    return traj_
+
+    
+def data_process():
+    n = 0
+    SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    diff_map_inp = SH_map.diff_map1_show(0.2)
+    trajinp = traj_inp("/nas/user/wyh/TNC/traj_dealer/30w_valid_traj_ShangHai.txt")
+
+    mmtrajs = mm.avail_mm(diff_map_inp, trajinp)
+
+    # print(trajinp)
+
+    for mmtraj in tqdm(mmtrajs):
+        n+=1
+        with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/diff1_30w_traj.txt", 'a') as f:
+            for item in mmtraj:
+                f.write(str(item) + ' ')
+            if n>0:
+                f.write('\n')
+
+    print("finish")
+    return 0
+
+
+def test_map():
+    # m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
+    SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    diff_map_inp = SH_map.diff_map1_show(0.2)
+    trajinp = traj_inp("/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt")
+
+    y = mm.avail_mm(diff_map_inp, trajinp)
+    
+
+    
+
+    # print(SH_map.diff_map1_show(0.2))
+    # print(SH_map.valid_map_show())
+    # trajinp0 = traj_inp("/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt")
+
+    # trajinp = traj_inp0("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/1_traj_test.txt")
+
+    # x = SH_map.valid_map_show()
+    # mmtrajs = mm.avail_mm(x, trajinp)
+
+    # # # print(trajinp)
+
+    # for mmtraj in tqdm(mmtrajs):
+    #     with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/5_traj.txt", 'a') as f:
+    #         for item in mmtraj:
+    #             f.write(str(item) + ' ')
+    #         f.write('\n')
+
+
+    # traj_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_traj.txt"  
+    # route_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/new_30w_route.txt" 
+    # generate_route_file(SH_map, traj_file_path, route_file_path)
+
+
+    print("endd")
+
+
+if __name__ == "__main__":
+    # print(traj_inp("/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt"))
+    # test_map()
+    # draw_traj_on_map()
+    # pass
+
+    data_process()
+
+
+
 class MMap:
     def __init__(self, dir):
         edgeFile = open(dir)
@@ -1147,204 +1327,3 @@ class MMap:
             if e != tmp_e:
                 tmp_e = e
                 eid.append(e)
-
-
-# map为Map类数据，traj为轨迹文件路径string, 现在变为traj_inp格式
-def mmtraj_route(map, traj, T = True):
-    x = map.valid_map_show()
-    y = mm.avail_mm(x, traj)
-    # 删去False输出路口序列
-    mmtraj = map.shortest_route(y, T)
-    return mmtraj
-
-# map为Map类数据，traj_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_traj.txt"  
-#  route_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_route.txt" 
-# 生成route文件
-def generate_route_file(map, traj_file_path, route_file_path): 
-    mmtrajs = map.shortest_route(test_traj(traj_file_path), False)
-
-    for mmtraj in tqdm(mmtrajs):
-        with open(route_file_path, 'a') as f:
-            for item in mmtraj:
-                f.write(str(item) + ' ')
-            f.write('\n')
-
-# diff_map为数组[]形式的地图（转变为为diff_Map类数据），traj为轨迹文件路径string
-def diff_mmtraj_route(diff_map, traj):
-    x = diff_Map(diff_map)
-    y = mm.avail_mm(diff_map, traj)
-    # 删去False输出路口序列
-    mmtraj = x.shortest_route(y, False)
-    return mmtraj, x
-
-# graph是一个networkx.Graph对象，表示图数据；返回一个torch.Tensor对象，shape为[n_nodes, 2]，表示每个节点的入度和出度特征向量
-def compute_degree_features(graph):
-    nodes = list(graph.nodes())
-    n_nodes = len(nodes)
-    # print(n_nodes)
-    # 初始化特征矩阵
-    features = torch.zeros(n_nodes, 2)
-    # 遍历每个节点
-    for i, node in enumerate(nodes):
-        # 计算节点的入度和出度
-        in_degree = graph.in_degree(node)
-        out_degree = graph.out_degree(node)
-        # 将入度和出度的值归一化到[0, 1]区间
-        in_degree = in_degree / (n_nodes - 1)
-        out_degree = out_degree / (n_nodes - 1)
-        # 将入度和出度的值赋给特征矩阵
-        features[i, 0] = in_degree
-        features[i, 1] = out_degree
-    # 返回特征矩阵
-    return features
-
-# r 为traj_file_route，e.g."/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt"
-def traj_inp(r):
-    traj_inp = []
-    trajFile = open(r)
-
-    for line in trajFile.readlines():
-        str_data = line.strip()
-        list_data = ast.literal_eval(str_data)
-        if type(list_data)==int:
-            continue
-        else:
-            traj_inp.append(list_data)
-
-    # print(len(traj_inp))
-    # [[['1', '1.1', '1.2', '123'], ['1', '1.1', '1.2', '123']],   [['1', '1.1', '1.2', '123'], ['1', '1.1', '1.2', '123']]]
-            
-    return traj_inp
-
-# 文件r格式："/nas/user/wyh/TNC/traj_dealer/30w_section_mode/error_30w_traj.txt"
-def traj_inp0(r):
-    traj_inp = []
-    traj_ = []
-    traj_path = open(r)
-
-    for line in traj_path.readlines():
-        item_list = line.strip().split()
-        if len(item_list) <= 1:
-            traj_inp.append(traj_)
-            traj_ = []
-            continue
-        else:
-            tsmp = str(int(float(item_list[0])))
-            lat = item_list[1]
-            lon = item_list[2]
-            rid = item_list[3]
-            traj_.append([tsmp, lat, lon, rid])
-
-
-    return traj_inp
-
-
-def test_traj(r):
-    traj_ = []
-    traj_path = open(r)
-    for line in traj_path.readlines():
-        item_list = line.strip().split()
-        if len(item_list) <= 1:
-            traj_.append([int(float(item_list[0]))])
-            continue
-        else:
-            tsmp = int(float(item_list[0]))
-            lat = float(item_list[1])
-            lon = float(item_list[2])
-            rid = int(float(item_list[3]))
-            traj_.append([tsmp, lat, lon, rid])
-
-    return traj_
-
-    
-def data_process():
-    n = 0
-    SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-    trajinp = traj_inp("/nas/user/wyh/TNC/traj_dealer/30w_valid_traj_ShangHai.txt")
-    # mmtrajs = mmtraj_route(SH_map, trajinp, False)
-
-    x = SH_map.valid_map_show()
-    mmtrajs = mm.avail_mm(x, trajinp)
-
-    # print(trajinp)
-
-    for mmtraj in tqdm(mmtrajs):
-        n+=1
-        with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_traj.txt", 'a') as f:
-            for item in mmtraj:
-                f.write(str(item) + ' ')
-            if n>0:
-                f.write('\n')
-
-    
-    # for mmtraj in tqdm(mmtrajs):
-    #     n+=1
-    #     if n>240000:
-    #         print("val", n)
-    #         with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_val.txt", 'a') as f_val:
-    #             if n>240001:
-    #                 f_val.write('\n')
-    #             for sec_pair in mmtraj:
-    #                 for sec in sec_pair:
-    #                     f_val.write(str(sec) + ' ')
-
-    #     elif n>210000:
-    #         print("test", n)
-    #         with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_test.txt", 'a') as f_test:
-    #             if n>210001:
-    #                 f_test.write('\n')
-    #             for sec_pair in mmtraj:
-    #                 for sec in sec_pair:
-    #                     f_test.write(str(sec) + ' ')
-
-    #     else:
-    #         print("train", n)
-    #         with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_train.txt", 'a') as f_train:
-    #             if n>1:
-    #                 f_train.write('\n')
-    #             for sec_pair in mmtraj:
-    #                 for sec in sec_pair:
-    #                     f_train.write(str(sec) + ' ')
-
-    print("finish")
-    return 0
-
-
-def test_map():
-    # m = folium.Map(location=[31.2389, 121.4992], zoom_start=12)
-    SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-    print(SH_map.diff_map1_show(0.2))
-    # print(SH_map.valid_map_show())
-    # trajinp0 = traj_inp("/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt")
-
-    # trajinp = traj_inp0("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/1_traj_test.txt")
-
-    # x = SH_map.valid_map_show()
-    # mmtrajs = mm.avail_mm(x, trajinp)
-
-    # # # print(trajinp)
-
-    # for mmtraj in tqdm(mmtrajs):
-    #     with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/5_traj.txt", 'a') as f:
-    #         for item in mmtraj:
-    #             f.write(str(item) + ' ')
-    #         f.write('\n')
-
-
-    # traj_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/30w_traj.txt"  
-    # route_file_path = "/nas/user/wyh/TNC/traj_dealer/30w_section_mode/new_30w_route.txt" 
-    # generate_route_file(SH_map, traj_file_path, route_file_path)
-
-
-    print("endd")
-
-
-if __name__ == "__main__":
-    # print(traj_inp("/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt"))
-    test_map()
-    # draw_traj_on_map()
-    # pass
-
-    # data_process()
-
-
