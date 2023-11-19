@@ -44,7 +44,7 @@ class Map:
     def __init__(self, dir, zone_range):
         edgeFile = open(dir + '/edgeOSM.txt')
         # 处理waytype信息，对应edgeosm中第一个参数
-        wayFile = open(dir + '/wayTypeOSM.txt')
+        # wayFile = open(dir + '/wayTypeOSM.txt')
         # for line in wayFile.readlines():
         #     item_list = line.strip().split()
         #     roadId = int(item_list[0])
@@ -1022,6 +1022,15 @@ def data_process():
     n = 0
     SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
     diff_map_inp = SH_map.diff_map1_show(0.2)
+
+    with open("/nas/user/wyh/TNC/traj_dealer/diff_map/diff2_30w_traj.txt", 'a') as f:
+        for row in tqdm(diff_map_inp):
+            for item in row:
+                f.write(str(item) + ' ')
+            f.write('\n')
+
+    print("diff_map done")
+
     trajinp = traj_inp("/nas/user/wyh/TNC/traj_dealer/30w_valid_traj_ShangHai.txt")
 
     mmtrajs = mm.avail_mm(diff_map_inp, trajinp)
@@ -1030,7 +1039,7 @@ def data_process():
 
     for mmtraj in tqdm(mmtrajs):
         n+=1
-        with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/diff1_30w_traj.txt", 'a') as f:
+        with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/diff2_30w_traj.txt", 'a') as f:
             for item in mmtraj:
                 f.write(str(item) + ' ')
             if n>0:
@@ -1038,6 +1047,39 @@ def data_process():
 
     print("finish")
     return 0
+
+def anomaly_data_process():
+    n = 0
+    SH_map = Map("/nas/user/wyh/TNC/traj_dealer/diff_map", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    diff_map_inp = SH_map.valid_map_show()
+
+    print("diff_map done")
+
+    trajinp = traj_inp("/nas/user/wyh/TNC/traj_dealer/30w_valid_traj_ShangHai.txt")
+
+    trajinp = trajinp[178840:]
+
+    print("trajinp done")
+
+    mmtrajs = mm.avail_mm(diff_map_inp, trajinp)
+
+    cnt = 178841
+
+    for mmtraj in tqdm(mmtrajs):
+        n+=1
+        with open("/nas/user/wyh/TNC/traj_dealer/30w_section_mode/diff1_30w_traj.txt", 'a') as f:
+            for item in mmtraj:
+                if item<0:
+                    item = -1 * cnt
+                    f.write(str(item) + ' ')
+                    cnt+=1
+                else:
+                    f.write(str(item) + ' ')
+            if n>0:
+                f.write('\n')
+
+    # print("finish")
+    # return 0
 
 
 def test_map():
@@ -1083,7 +1125,7 @@ if __name__ == "__main__":
     # draw_traj_on_map()
     # pass
 
-    data_process()
+    anomaly_data_process()
 
 
 
