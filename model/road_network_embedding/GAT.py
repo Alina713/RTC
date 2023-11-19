@@ -38,38 +38,12 @@ class UnsupervisedGAT(nn.Module):
             ]
         )
 
-    # def forward(self, g, n_feat, e_feat):
-    #     num_nodes = n_feat.size(0)
-    #     for i, layer in enumerate(self.layers):
-    #         n_feat = layer(g, n_feat)
-    #         n_feat = n_feat.reshape(num_nodes, -1)
-    #     return n_feat
-
-    def forward(self, g):
-        num_nodes = g.number_of_nodes()
-        # 节点特征随机，待讨论
-        n_feat = torch.randn((num_nodes, self.in_dims[0]))
-        # print("..", n_feat)
+    def forward(self, g, n_feat, e_feat):
+        num_nodes = n_feat.size(0)
         for i, layer in enumerate(self.layers):
             n_feat = layer(g, n_feat)
             n_feat = n_feat.reshape(num_nodes, -1)
         return n_feat
-    
-# 定义边的起点和终点
-src = torch.tensor([0, 1, 2, 1, 6])
-dst = torch.tensor([1, 2, 0, 6, 1])
-# src = torch.tensor([0, 1, 2])
-# dst = torch.tensor([1, 2, 0])
-
-# 使用dgl.DGLGraph创建图
-g = dgl.graph((src, dst))
-# n_feat = torch.randn((7, 64))
-
-core = UnsupervisedGAT(1, 64, 0, 2, 8)
-ans = core(g)
-# ans = core(g, n_feat, None)
-print(ans.size())
-
 
 class GraphEncoder(nn.Module):
     def __init__(
@@ -102,6 +76,16 @@ class GraphEncoder(nn.Module):
         # import pdb
         # pdb.set_trace()
         return x
-    
-# map_graph = GraphEncoder(1, 64, 64, 64, 0, 2, 8, True)
-# output = map_graph(g, n_feat)
+
+# 定义边的起点和终点
+src = torch.tensor([0, 1, 2, 1, 6])
+dst = torch.tensor([1, 2, 0, 6, 1])
+
+g = dgl.graph((src, dst))
+# 7为图的节点数目，1为节点特征的维度
+n_feat = torch.randn((7, 1))
+
+map_graph = GraphEncoder(1, 64, 64, 64, 0, 2, 8, True)
+output = map_graph(g, n_feat)
+
+print(output.size())
