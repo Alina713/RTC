@@ -19,6 +19,29 @@ from logging import getLogger
 
 # from torch.autograd import Variable
 
+def drop_path_func(x, drop_prob=0., training=False):
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    """
+    if drop_prob == 0. or not training:
+        return x
+    keep_prob = 1 - drop_prob
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+    random_tensor.floor_()  # binarize
+    output = x.div(keep_prob) * random_tensor
+    return output
+
+
+class DropPath(nn.Module):
+    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
+    """
+    def __init__(self, drop_prob=None):
+        super(DropPath, self).__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+        return drop_path_func(x, self.drop_prob, self.training)
+
 class PositionalEmbedding(nn.Module):
 
     def __init__(self, d_model, max_len=512):
@@ -58,7 +81,6 @@ class PositionalEmbedding(nn.Module):
             position_ids = position_ids.reshape(-1, 1).squeeze(1)  # (B * T,)
             output_pe = pe[position_ids].reshape(batch_size, seq_len, self.d_model).detach()
             return output_pe
-
 
 
 class UnsupervisedGAT(nn.Module):
@@ -199,15 +221,17 @@ dst = torch.tensor([1, 2, 0, 6, 1])
 g = dgl.graph((src, dst))
 # 7为图的节点数目，1为节点特征的维度
 n_feat = torch.randn((7, 1))
-x = torch.tensor([[0, 1, 2, 1, 6], [1, 2, 0, 6, 1]])
+x = torch.tensor([[0, 1, 2, 1]])
+x2 = torch.tensor([[0, 1, 2]])
 
 # GraphEncoder里面有问题
 a = RouteEmbedding(64, dropout=0.1, add_pe=True, node_fea_dim=1, add_gat=True, norm=True)
 ans = a(x, g, n_feat)
+ans2 = a(x2, g, n_feat)
 
-print(ans.shape)
+# 因为加了positional embedding，所以结果不一样
 print(ans)
-
+print(ans2)
 
 class MultiHeadedAttention(nn.Module):
 
@@ -388,3 +412,106 @@ class TransformerBlock(nn.Module):
         else:
             raise ValueError('Error type_ln {}'.format(self.type_ln))
         return x, attn_score
+    
+
+class BERT(nn.Module):
+    """
+    BERT model : Bidirectional Encoder Representations from Transformers.
+    """
+
+    def __init__(self, config, data_feature):
+        """
+        Args:
+        """
+        super().__init__()
+
+        self.config = config
+
+        self.vocab_size = data_feature.get('vocab_size')
+        self.usr_num = data_feature.get('usr_num')
+        self.node_fea_dim = data_feature.get('node_fea_dim')
+
+        self.d_model = self.config.get('d_model', 768)
+        self.n_layers = self.config.get('n_layers', 12)
+        self.attn_heads = self.config.get('attn_heads', 12)
+        self.mlp_ratio = self.config.get('mlp_ratio', 4)
+        self.dropout = self.config.get('dropout', 0.1)
+        self.drop_path = self.config.get('drop_path', 0.3)
+        self.lape_dim = self.config.get('lape_dim', 256)
+        self.attn_drop = self.config.get('attn_drop', 0.1)
+        self.type_ln = self.config.get('type_ln', 'pre')
+        self.future_mask = self.config.get('future_mask', False)
+        self.add_cls = self.config.get('add_cls', False)
+        self.device = self.config.get('device', torch.device('cpu'))
+        self.cutoff_row_rate = self.config.get('cutoff_row_rate', 0.2)
+        self.cutoff_column_rate = self.config.get('cutoff_column_rate', 0.2)
+        self.cutoff_random_rate = self.config.get('cutoff_random_rate', 0.2)
+        self.sample_rate = self.config.get('sample_rate', 0.2)
+        self.device = self.config.get('device', torch.device('cpu'))
+        self.add_time_in_day = self.config.get('add_time_in_day', True)
+        self.add_day_in_week = self.config.get('add_day_in_week', True)
+        self.add_pe = self.config.get('add_pe', True)
+        self.add_gat = self.config.get('add_gat', True)
+        self.norm = self.config.get('norm', True)
+        self.gat_heads_per_layer = self.config.get('gat_heads_per_layer', [8, 1])
+        self.gat_features_per_layer = self.config.get('gat_features_per_layer', [16, self.d_model])
+        self.gat_dropout = self.config.get('gat_dropout', 0.6)
+        self.gat_avg_last = self.config.get('gat_avg_last', True)
+        self.load_trans_prob = self.config.get('load_trans_prob', False)
+        self.add_temporal_bias = self.config.get('add_temporal_bias', True)
+        self.temporal_bias_dim = self.config.get('temporal_bias_dim', 64)
+        self.use_mins_interval = self.config.get('use_mins_interval', False)
+
+        # paper noted they used 4*hidden_size for ff_network_hidden_size
+        self.feed_forward_hidden = self.d_model * self.mlp_ratio
+
+        # embedding for BERT, sum of ... embeddings
+        self.embedding = RouteEmbedding(d_model=self.d_model, dropout=self.dropout,
+                                       add_pe=self.add_pe, node_fea_dim=self.node_fea_dim, add_gat=self.add_gat, norm=self.norm,
+                                       gat_heads_per_layer=self.gat_heads_per_layer,gat_features_per_layer=self.gat_features_per_layer, gat_dropout=self.gat_dropout,
+                                       load_trans_prob=self.load_trans_prob, avg_last=self.gat_avg_last)
+
+        # multi-layers transformer blocks, deep network
+        enc_dpr = [x.item() for x in torch.linspace(0, self.drop_path, self.n_layers)]  # stochastic depth decay rule
+        self.transformer_blocks = nn.ModuleList(
+            [TransformerBlock(d_model=self.d_model, attn_heads=self.attn_heads,
+                              feed_forward_hidden=self.feed_forward_hidden, drop_path=enc_dpr[i],
+                              attn_drop=self.attn_drop, dropout=self.dropout,
+                              type_ln=self.type_ln, add_cls=self.add_cls,
+                              device=self.device, add_temporal_bias=self.add_temporal_bias,
+                              temporal_bias_dim=self.temporal_bias_dim,
+                              use_mins_interval=self.use_mins_interval) for i in range(self.n_layers)])
+
+
+    def forward(self, x, padding_masks, g, n_feat, batch_temporal_mat=None, argument_methods=None, 
+                output_hidden_states=False, output_attentions=False):
+        """
+        Args:
+            x: (batch_size, seq_length, feat_dim) torch tensor of masked features (input)
+            padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
+        Returns:
+            output: (batch_size, seq_length, feat_dim)
+        """
+        position_ids = None
+        g = None
+        n_feat = None
+
+
+        # embedding the indexed sequence to sequence of vectors
+        embedding_output = self.embedding(sequence=x, g = g, n_feat = n_feat, position_ids = None)  # (B, T, d_model)
+
+
+        padding_masks_input = padding_masks.unsqueeze(1).repeat(1, x.size(1), 1).unsqueeze(1)  # (B, 1, T, T)
+        # running over multiple transformer blocks
+        all_hidden_states = [embedding_output] if output_hidden_states else None
+        all_self_attentions = [] if output_attentions else None
+        for transformer in self.transformer_blocks:
+            embedding_output, attn_score = transformer.forward(
+                x=embedding_output, padding_masks=padding_masks_input,
+                future_mask=self.future_mask, output_attentions=output_attentions,
+                batch_temporal_mat=batch_temporal_mat)  # (B, T, d_model)
+            if output_hidden_states:
+                all_hidden_states.append(embedding_output)
+            if output_attentions:
+                all_self_attentions.append(attn_score)
+        return embedding_output, all_hidden_states, all_self_attentions  # (B, T, d_model), list of (B, T, d_model), list of (B, head, T, T)
