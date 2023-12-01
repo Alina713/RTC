@@ -174,9 +174,7 @@ class GraphEncoder(nn.Module):
 class RouteEmbedding(nn.Module):
 
     def __init__(self, d_model, dropout=0.1, 
-                 add_pe=True, node_fea_dim = 1, add_gat=True, norm = True, 
-                 gat_heads_per_layer=None, gat_features_per_layer=None, gat_dropout=0.6,
-                 load_trans_prob=True, avg_last=True):
+                 add_pe=True, node_fea_dim = 1, add_gat=True, norm = True):
         """
         Args:
             vocab_size: total vocab size
@@ -213,32 +211,17 @@ class RouteEmbedding(nn.Module):
         if self.add_pe:
             x += self.position_embedding(x, position_ids)  # (B, T, d_model)
         return self.dropout(x)
-    
-# 定义边的起点和终点
-src = torch.tensor([0, 1, 2, 1, 6])
-dst = torch.tensor([1, 2, 0, 6, 1])
 
-g = dgl.graph((src, dst))
-# 7为图的节点数目，1为节点特征的维度
-n_feat = torch.randn((7, 1))
-x = torch.tensor([[0, 1, 2, 1]])
-x2 = torch.tensor([[0, 1, 2]])
-
-# GraphEncoder里面有问题
-a = RouteEmbedding(64, dropout=0.1, add_pe=True, node_fea_dim=1, add_gat=True, norm=True)
-ans = a(x, g, n_feat)
-ans2 = a(x2, g, n_feat)
-
-# 因为加了positional embedding，所以结果不一样
-print(ans)
-print(ans2)
+# 以上可以得到一个batch中的positional embedding + token embedding
+# size: (B, T, d_model)
 
 class MultiHeadedAttention(nn.Module):
-
     def __init__(self, num_heads, d_model, dim_out, attn_drop=0., proj_drop=0.,
-                 add_cls=True, device=torch.device('cpu'), add_temporal_bias=True,
-                 temporal_bias_dim=64, use_mins_interval=False):
+                 add_cls=True, device=torch.device('cpu'), 
+                # device = torch.device('cuda:0')
+                 ):
         super().__init__()
+
         assert d_model % num_heads == 0
 
         # We assume d_v always equals d_k
@@ -247,9 +230,6 @@ class MultiHeadedAttention(nn.Module):
         self.device = device
         self.add_cls = add_cls
         self.scale = self.d_k ** -0.5  # 1/sqrt(dk)
-        self.add_temporal_bias = add_temporal_bias
-        self.temporal_bias_dim = temporal_bias_dim
-        self.use_mins_interval = use_mins_interval
 
         self.linear_layers = nn.ModuleList([nn.Linear(d_model, d_model) for _ in range(3)])
         self.dropout = nn.Dropout(p=attn_drop)
@@ -257,22 +237,17 @@ class MultiHeadedAttention(nn.Module):
         self.proj = nn.Linear(d_model, dim_out)
         self.proj_drop = nn.Dropout(proj_drop)
 
-        if self.add_temporal_bias:
-            if self.temporal_bias_dim != 0 and self.temporal_bias_dim != -1:
-                self.temporal_mat_bias_1 = nn.Linear(1, self.temporal_bias_dim, bias=True)
-                self.temporal_mat_bias_2 = nn.Linear(self.temporal_bias_dim, 1, bias=True)
-            elif self.temporal_bias_dim == -1:
-                self.temporal_mat_bias = nn.Parameter(torch.Tensor(1, 1))
-                nn.init.xavier_uniform_(self.temporal_mat_bias)
-
-    def forward(self, x, padding_masks, future_mask=True, output_attentions=False, batch_temporal_mat=None):
+    def forward(self, x, padding_masks, future_mask=True, output_attentions=False):
         """
+
         Args:
             x: (B, T, d_model)
             padding_masks: (B, 1, T, T) padding_mask
             future_mask: True/False
             batch_temporal_mat: (B, T, T)
+
         Returns:
+
         """
         batch_size, seq_len, d_model = x.shape
 
@@ -285,23 +260,6 @@ class MultiHeadedAttention(nn.Module):
 
         # 2) Apply attention on all the projected vectors in batch.
         scores = torch.matmul(query, key.transpose(-2, -1)) * self.scale  # (B, head, T, T)
-
-        if self.add_temporal_bias:
-            if self.use_mins_interval:
-                batch_temporal_mat = 1.0 / torch.log(
-                    torch.exp(torch.tensor(1.0).to(self.device)) +
-                    (batch_temporal_mat / torch.tensor(60.0).to(self.device)))
-            else:
-                batch_temporal_mat = 1.0 / torch.log(
-                    torch.exp(torch.tensor(1.0).to(self.device)) + batch_temporal_mat)
-            if self.temporal_bias_dim != 0 and self.temporal_bias_dim != -1:
-                batch_temporal_mat = self.temporal_mat_bias_2(F.leaky_relu(
-                    self.temporal_mat_bias_1(batch_temporal_mat.unsqueeze(-1)),
-                    negative_slope=0.2)).squeeze(-1)  # (B, T, T)
-            if self.temporal_bias_dim == -1:
-                batch_temporal_mat = batch_temporal_mat * self.temporal_mat_bias.expand((1, seq_len, seq_len))
-            batch_temporal_mat = batch_temporal_mat.unsqueeze(1)  # (B, 1, T, T)
-            scores += batch_temporal_mat  # (B, 1, T, T)
 
         if padding_masks is not None:
             scores.masked_fill_(padding_masks == 0, float('-inf'))
@@ -361,8 +319,7 @@ class TransformerBlock(nn.Module):
 
     def __init__(self, d_model, attn_heads, feed_forward_hidden, drop_path,
                  attn_drop, dropout, type_ln='pre', add_cls=True,
-                 device=torch.device('cpu'), add_temporal_bias=True,
-                 temporal_bias_dim=64, use_mins_interval=False):
+                 device=torch.device('cpu')):
         """
         Args:
             d_model: hidden size of transformer
@@ -377,9 +334,7 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.attention = MultiHeadedAttention(num_heads=attn_heads, d_model=d_model, dim_out=d_model,
                                               attn_drop=attn_drop, proj_drop=dropout, add_cls=add_cls,
-                                              device=device, add_temporal_bias=add_temporal_bias,
-                                              temporal_bias_dim=temporal_bias_dim,
-                                              use_mins_interval=use_mins_interval)
+                                              device=device)
         self.mlp = Mlp(in_features=d_model, hidden_features=feed_forward_hidden,
                        out_features=d_model, act_layer=nn.GELU, drop=dropout)
         self.norm1 = nn.LayerNorm(d_model)
@@ -387,7 +342,7 @@ class TransformerBlock(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.type_ln = type_ln
 
-    def forward(self, x, padding_masks, future_mask=True, output_attentions=False, batch_temporal_mat=None):
+    def forward(self, x, padding_masks, future_mask=True, output_attentions=False):
         """
         Args:
             x: (B, T, d_model)
@@ -399,14 +354,12 @@ class TransformerBlock(nn.Module):
         """
         if self.type_ln == 'pre':
             attn_out, attn_score = self.attention(self.norm1(x), padding_masks=padding_masks,
-                                                  future_mask=future_mask, output_attentions=output_attentions,
-                                                  batch_temporal_mat=batch_temporal_mat)
+                                                  future_mask=future_mask, output_attentions=output_attentions)
             x = x + self.drop_path(attn_out)
             x = x + self.drop_path(self.mlp(self.norm2(x)))
         elif self.type_ln == 'post':
             attn_out, attn_score = self.attention(x, padding_masks=padding_masks,
-                                                  future_mask=future_mask, output_attentions=output_attentions,
-                                                  batch_temporal_mat=batch_temporal_mat)
+                                                  future_mask=future_mask, output_attentions=output_attentions)
             x = self.norm1(x + self.drop_path(attn_out))
             x = self.norm2(x + self.drop_path(self.mlp(x)))
         else:
@@ -427,10 +380,11 @@ class BERT(nn.Module):
 
         self.config = config
 
-        self.vocab_size = data_feature.get('vocab_size')
-        self.usr_num = data_feature.get('usr_num')
-        self.node_fea_dim = data_feature.get('node_fea_dim')
+        self.vocab_size = data_feature.get('vocab_size', 1)
+        # self.node_fea_dim = data_feature.get('node_fea_dim')
+        self.node_fea_dim = data_feature.get('node_fea_dim', 1)
 
+        # d,model 必须可以整除 n_layers
         self.d_model = self.config.get('d_model', 768)
         self.n_layers = self.config.get('n_layers', 12)
         self.attn_heads = self.config.get('attn_heads', 12)
@@ -440,36 +394,23 @@ class BERT(nn.Module):
         self.lape_dim = self.config.get('lape_dim', 256)
         self.attn_drop = self.config.get('attn_drop', 0.1)
         self.type_ln = self.config.get('type_ln', 'pre')
+        # 如果 `add_cls` 为 `True`，则在生成 `future_mask` 时，可能会将 `[CLS]` token 对应的位置设置为 `False`，即允许模型在生成 `[CLS]` token 的输出时，
+        # 查看整个输入序列的信息。这是因为 `[CLS]` token 的输出通常被用作整个序列的聚合表示，所以需要考虑整个序列的信息。
         self.future_mask = self.config.get('future_mask', False)
-        self.add_cls = self.config.get('add_cls', False)
-        self.device = self.config.get('device', torch.device('cpu'))
-        self.cutoff_row_rate = self.config.get('cutoff_row_rate', 0.2)
-        self.cutoff_column_rate = self.config.get('cutoff_column_rate', 0.2)
-        self.cutoff_random_rate = self.config.get('cutoff_random_rate', 0.2)
-        self.sample_rate = self.config.get('sample_rate', 0.2)
-        self.device = self.config.get('device', torch.device('cpu'))
-        self.add_time_in_day = self.config.get('add_time_in_day', True)
-        self.add_day_in_week = self.config.get('add_day_in_week', True)
+        # False
+        self.add_cls = self.config.get('add_cls', True)
+        # self.device = self.config.get('device', torch.device('cpu'))
+        self.device = self.config.get('device', torch.device('cuda:0'))
         self.add_pe = self.config.get('add_pe', True)
         self.add_gat = self.config.get('add_gat', True)
         self.norm = self.config.get('norm', True)
-        self.gat_heads_per_layer = self.config.get('gat_heads_per_layer', [8, 1])
-        self.gat_features_per_layer = self.config.get('gat_features_per_layer', [16, self.d_model])
-        self.gat_dropout = self.config.get('gat_dropout', 0.6)
-        self.gat_avg_last = self.config.get('gat_avg_last', True)
-        self.load_trans_prob = self.config.get('load_trans_prob', False)
-        self.add_temporal_bias = self.config.get('add_temporal_bias', True)
-        self.temporal_bias_dim = self.config.get('temporal_bias_dim', 64)
-        self.use_mins_interval = self.config.get('use_mins_interval', False)
 
         # paper noted they used 4*hidden_size for ff_network_hidden_size
         self.feed_forward_hidden = self.d_model * self.mlp_ratio
 
         # embedding for BERT, sum of ... embeddings
         self.embedding = RouteEmbedding(d_model=self.d_model, dropout=self.dropout,
-                                       add_pe=self.add_pe, node_fea_dim=self.node_fea_dim, add_gat=self.add_gat, norm=self.norm,
-                                       gat_heads_per_layer=self.gat_heads_per_layer,gat_features_per_layer=self.gat_features_per_layer, gat_dropout=self.gat_dropout,
-                                       load_trans_prob=self.load_trans_prob, avg_last=self.gat_avg_last)
+                                       add_pe=self.add_pe, node_fea_dim=self.node_fea_dim, add_gat=self.add_gat, norm=self.norm)
 
         # multi-layers transformer blocks, deep network
         enc_dpr = [x.item() for x in torch.linspace(0, self.drop_path, self.n_layers)]  # stochastic depth decay rule
@@ -478,23 +419,21 @@ class BERT(nn.Module):
                               feed_forward_hidden=self.feed_forward_hidden, drop_path=enc_dpr[i],
                               attn_drop=self.attn_drop, dropout=self.dropout,
                               type_ln=self.type_ln, add_cls=self.add_cls,
-                              device=self.device, add_temporal_bias=self.add_temporal_bias,
-                              temporal_bias_dim=self.temporal_bias_dim,
-                              use_mins_interval=self.use_mins_interval) for i in range(self.n_layers)])
+                              device=self.device) for i in range(self.n_layers)])
 
 
-    def forward(self, x, padding_masks, g, n_feat, batch_temporal_mat=None, argument_methods=None, 
+    def forward(self, x, padding_masks, g, n_feat, 
                 output_hidden_states=False, output_attentions=False):
         """
         Args:
             x: (batch_size, seq_length, feat_dim) torch tensor of masked features (input)
             padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
+            `padding_masks`是一个形状为`(batch_size, seq_length)`的张量，其中`1`表示该位置的向量是需要保留的，`0`表示该位置是填充的。
+            g 与 n_feat对应原来的 graph_dict
         Returns:
             output: (batch_size, seq_length, feat_dim)
         """
         position_ids = None
-        g = None
-        n_feat = None
 
 
         # embedding the indexed sequence to sequence of vectors
@@ -508,10 +447,287 @@ class BERT(nn.Module):
         for transformer in self.transformer_blocks:
             embedding_output, attn_score = transformer.forward(
                 x=embedding_output, padding_masks=padding_masks_input,
-                future_mask=self.future_mask, output_attentions=output_attentions,
-                batch_temporal_mat=batch_temporal_mat)  # (B, T, d_model)
+                future_mask=self.future_mask, output_attentions=output_attentions)  # (B, T, d_model)
             if output_hidden_states:
                 all_hidden_states.append(embedding_output)
             if output_attentions:
                 all_self_attentions.append(attn_score)
         return embedding_output, all_hidden_states, all_self_attentions  # (B, T, d_model), list of (B, T, d_model), list of (B, head, T, T)
+
+def get_padding_mask(time_series, pad_value=0):
+    """
+    根据时间序列获取padding mask。
+
+    参数:
+        time_series (np.array): 时间序列，假设填充值为0
+        pad_value (int): 填充值，默认为0
+
+    返回:
+        np.array: padding mask，和时间序列形状相同，填充位置为True，非填充位置为False
+    """
+    return time_series == pad_value
+
+
+if __name__ == '__main__':
+    src = torch.tensor([3, 1, 2, 1, 6])
+    dst = torch.tensor([1, 2, 3, 6, 1])
+    g = dgl.graph((src, dst))
+    n_feat = torch.randn((7, 1))
+    x = torch.tensor([[2, 6, 3, 1, 0], [1, 2, 1, 0, 0]])
+    config = {'key': 'value'}
+    data_feature = {'key': 'value'}
+    model_train = BERT(config, data_feature)
+
+    padding_mask = get_padding_mask(x)
+
+    ans = model_train(x, padding_mask, g, n_feat)
+    print(ans)
+    print(ans[0].shape)
+
+
+
+# 下游任务，先不考虑
+# class BERTDownstream(nn.Module):
+
+#     def __init__(self, config, data_feature):
+#         super().__init__()
+
+#         self.config = config
+
+#         self.vocab_size = data_feature.get('vocab_size')
+#         self.usr_num = data_feature.get('usr_num')
+#         self.pooling = self.config.get('pooling', 'mean')
+#         self.d_model = self.config.get('d_model', 768)
+#         self.add_cls = self.config.get('add_cls', True)
+#         self.baseline_bert = self.config.get('baseline_bert', False)
+#         self.baseline_tf = self.config.get('baseline_tf', False)
+
+#         self._logger = getLogger()
+#         self._logger.info("Building BERTDownstream model")
+
+#         self.bert = BERT(config, data_feature)
+
+#     def forward(self, x, padding_masks, batch_temporal_mat=None,
+#                 graph_dict=None, output_hidden_states=False, output_attentions=False):
+#         """
+#         Args:
+#             x: (batch_size, seq_length, feat_dim) torch tensor of masked features (input)
+#             padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
+#         Returns:
+#             output: (batch_size, feat_dim)
+#         """
+#         if self.pooling in ['avg_first_last', 'avg_top2']:
+#             output_hidden_states = True
+#         token_emb, hidden_states, _ = self.bert(x=x, padding_masks=padding_masks,
+#                                                 batch_temporal_mat=batch_temporal_mat, graph_dict=graph_dict,
+#                                                 output_hidden_states=output_hidden_states,
+#                                                 output_attentions=output_attentions)  # (batch_size, seq_length, d_model)
+#         if self.pooling == 'cls' or self.pooling == 'cls_before_pooler':
+#             if self.add_cls:
+#                 return token_emb[:, 0, :]  # (batch_size, feat_dim)
+#             else:
+#                 raise ValueError('No use cls!')
+#         elif self.pooling == 'mean':
+#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+#                 token_emb.size()).float()  # (batch_size, seq_length, d_model)
+#             sum_embeddings = torch.sum(token_emb * input_mask_expanded, 1)
+#             sum_mask = input_mask_expanded.sum(1)
+#             sum_mask = torch.clamp(sum_mask, min=1e-9)
+#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
+#         elif self.pooling == 'max':
+#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+#                 token_emb.size()).float()  # (batch_size, seq_length, d_model)
+#             token_emb[input_mask_expanded == 0] = float('-inf')  # Set padding tokens to large negative value
+#             max_over_time = torch.max(token_emb, 1)[0]
+#             return max_over_time  # (batch_size, feat_dim)
+#         elif self.pooling == "avg_first_last":
+#             first_hidden = hidden_states[0]  # (batch_size, seq_length, d_model)
+#             last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
+#             avg_emb = (first_hidden + last_hidden) / 2.0
+#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+#                 avg_emb.size()).float()  # (batch_size, seq_length, d_model)
+#             sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
+#             sum_mask = input_mask_expanded.sum(1)
+#             sum_mask = torch.clamp(sum_mask, min=1e-9)
+#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
+#         elif self.pooling == "avg_top2":
+#             second_last_hidden = hidden_states[-2]  # (batch_size, seq_length, d_model)
+#             last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
+#             avg_emb = (second_last_hidden + last_hidden) / 2.0
+#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+#                 avg_emb.size()).float()  # (batch_size, seq_length, d_model)
+#             sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
+#             sum_mask = input_mask_expanded.sum(1)
+#             sum_mask = torch.clamp(sum_mask, min=1e-9)
+#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
+#         else:
+#             raise ValueError('Error pooling type {}'.format(self.pooling))
+
+
+# class MLPLayer(nn.Module):
+#     """
+#     Head for getting sentence representations over RoBERTa/BERT's CLS representation.
+#     """
+
+#     def __init__(self, d_model):
+#         super().__init__()
+#         self.dense = nn.Linear(d_model, d_model)
+#         self.activation = nn.Tanh()
+
+#     def forward(self, features):
+#         x = self.dense(features)
+#         x = self.activation(x)
+#         return x
+
+
+# class BERTPooler(nn.Module):
+
+#     def __init__(self, config, data_feature):
+#         super().__init__()
+
+#         self.config = config
+
+#         self.pooling = self.config.get('pooling', 'mean')
+#         self.add_cls = self.config.get('add_cls', True)
+#         self.d_model = self.config.get('d_model', 768)
+#         self.linear = MLPLayer(d_model=self.d_model)
+
+#         self._logger = getLogger()
+#         self._logger.info("Building BERTPooler model")
+
+#     def forward(self, bert_output, padding_masks, hidden_states=None):
+#         """
+#         Args:
+#             bert_output: (batch_size, seq_length, d_model) torch tensor of bert output
+#             padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
+#             hidden_states: list of hidden, (batch_size, seq_length, d_model)
+#         Returns:
+#             output: (batch_size, feat_dim)
+#         """
+#         token_emb = bert_output  # (batch_size, seq_length, d_model)
+#         if self.pooling == 'cls':
+#             if self.add_cls:
+#                 return self.linear(token_emb[:, 0, :])  # (batch_size, feat_dim)
+#             else:
+#                 raise ValueError('No use cls!')
+#         elif self.pooling == 'cls_before_pooler':
+#             if self.add_cls:
+#                 return token_emb[:, 0, :]  # (batch_size, feat_dim)
+#             else:
+#                 raise ValueError('No use cls!')
+#         elif self.pooling == 'mean':
+#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+#                 token_emb.size()).float()  # (batch_size, seq_length, d_model)
+#             sum_embeddings = torch.sum(token_emb * input_mask_expanded, 1)
+#             sum_mask = input_mask_expanded.sum(1)
+#             sum_mask = torch.clamp(sum_mask, min=1e-9)
+#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
+#         elif self.pooling == 'max':
+#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+#                 token_emb.size()).float()  # (batch_size, seq_length, d_model)
+#             token_emb[input_mask_expanded == 0] = float('-inf')  # Set padding tokens to large negative value
+#             max_over_time = torch.max(token_emb, 1)[0]
+#             return max_over_time  # (batch_size, feat_dim)
+#         elif self.pooling == "avg_first_last":
+#             first_hidden = hidden_states[0]  # (batch_size, seq_length, d_model)
+#             last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
+#             avg_emb = (first_hidden + last_hidden) / 2.0
+#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+#                 avg_emb.size()).float()  # (batch_size, seq_length, d_model)
+#             sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
+#             sum_mask = input_mask_expanded.sum(1)
+#             sum_mask = torch.clamp(sum_mask, min=1e-9)
+#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
+#         elif self.pooling == "avg_top2":
+#             second_last_hidden = hidden_states[-2]  # (batch_size, seq_length, d_model)
+#             last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
+#             avg_emb = (second_last_hidden + last_hidden) / 2.0
+#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+#                 avg_emb.size()).float()  # (batch_size, seq_length, d_model)
+#             sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
+#             sum_mask = input_mask_expanded.sum(1)
+#             sum_mask = torch.clamp(sum_mask, min=1e-9)
+#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
+#         else:
+#             raise ValueError('Error pooling type {}'.format(self.pooling))
+
+# class LinearETA(nn.Module):
+#     def __init__(self, config, data_feature):
+#         super().__init__()
+
+#         self.config = config
+
+#         self.vocab_size = data_feature.get('vocab_size')
+#         self.usr_num = data_feature.get('usr_num')
+#         self.pooling = self.config.get('pooling', 'mean')
+#         self.d_model = self.config.get('d_model', 768)
+
+#         self._logger = getLogger()
+#         self._logger.info("Building Downstream LinearETA model")
+
+#         self.model = BERTDownstream(config, data_feature)
+#         self.linear = nn.Linear(self.d_model, 1)
+
+#     def forward(self, x, padding_masks, batch_temporal_mat=None,
+#                 graph_dict=None, output_hidden_states=False, output_attentions=False):
+#         traj_emb = self.model(x=x, padding_masks=padding_masks,
+#                               batch_temporal_mat=batch_temporal_mat, graph_dict=graph_dict,
+#                               output_hidden_states=output_hidden_states,
+#                               output_attentions=output_attentions)  # (B, d_model)
+#         eta_pred = self.linear(traj_emb)  # (B, 1)
+#         return eta_pred  # (B, 1)
+
+
+# class BERTLM(nn.Module):
+
+#     def __init__(self, config, data_feature):
+#         super().__init__()
+
+#         self.config = config
+
+#         self.vocab_size = data_feature.get('vocab_size')
+#         self.usr_num = data_feature.get('usr_num')
+#         self.d_model = self.config.get('d_model', 768)
+
+#         self._logger = getLogger()
+#         self._logger.info("Building BERTLM model")
+
+#         self.bert = BERT(config, data_feature)
+
+#         # self.mask_l = MaskedLanguageModel(self.d_model, self.vocab_size)
+
+#     def forward(self, x, padding_masks, batch_temporal_mat=None,
+#                 graph_dict=None, output_hidden_states=False, output_attentions=False):
+#         """
+#         Args:
+#             x: (batch_size, seq_length, feat_dim) torch tensor of masked features (input)
+#             padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
+#         Returns:
+#             output: (batch_size, seq_length, vocab_size)
+#         """
+
+#         x, _, _ = self.bert(x=x, padding_masks=padding_masks,
+#                             batch_temporal_mat=batch_temporal_mat, graph_dict=graph_dict,
+#                             output_hidden_states=output_hidden_states,
+#                             output_attentions=output_attentions)  # (B, T, d_model)
+#         a = self.mask_l(x)
+#         return a
+
+# # 定义边的起点和终点
+# src = torch.tensor([0, 1, 2, 1, 6])
+# dst = torch.tensor([1, 2, 0, 6, 1])
+
+# g = dgl.graph((src, dst))
+# # 7为图的节点数目，1为节点特征的维度
+# n_feat = torch.randn((7, 1))
+# x = torch.tensor([[0, 1, 2, 1]])
+# x2 = torch.tensor([[0, 1, 2]])
+
+# # GraphEncoder里面有问题
+# a = RouteEmbedding(64, dropout=0.1, add_pe=True, node_fea_dim=1, add_gat=True, norm=True)
+# ans = a(x, g, n_feat)
+# ans2 = a(x2, g, n_feat)
+
+# # 因为加了positional embedding，所以结果不一样
+# print(ans)
+# print(ans2)
