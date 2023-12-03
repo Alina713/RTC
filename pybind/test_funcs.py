@@ -653,7 +653,6 @@ class Map:
             b = -999
         return a, b
 
-
 class diff_Map:
     def __init__(self, inp):
         self.edgeDis = []
@@ -1017,6 +1016,35 @@ def test_traj(r):
 
     return traj_
 
+def trans_map(diff_map_file_path):
+    kid = 0
+    diff_map_file = open(diff_map_file_path)
+    diff_inp = []
+    for line in diff_map_file.readlines():
+        item_list = line.strip().split()
+        my_tuple = ()
+        rn_id = int(item_list[0])
+
+        while kid!=rn_id:
+            qid = str(kid)
+            # 故意放大经纬度
+            my_tuple = (qid, '8', '9', '2', '41.2026054', '721.471474', '41.2022053', '721.4715559')
+            diff_inp.append(my_tuple)
+            kid+=1
+
+        my_tuple = tuple(item_list)
+        diff_inp.append(my_tuple)
+        kid+=1
+
+    with open("/nas/user/wyh/TNC/traj_dealer/diff_map/diff1_con_map.txt", 'a') as f:
+        for row in tqdm(diff_inp):
+            for item in row:
+                f.write(str(item) + ' ')
+            f.write('\n')
+
+
+    return 0
+    
     
 def data_process():
     n = 0
@@ -1123,249 +1151,8 @@ if __name__ == "__main__":
     # print(traj_inp("/nas/user/wyh/TNC/traj_dealer/10_valid_traj_ShangHai.txt"))
     # test_map()
     # draw_traj_on_map()
-    # pass
+    # sh_diff_map = Map("/nas/user/wyh/TNC/traj_dealer/diff_map", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+    # generate_route_file(sh_diff_map, "/nas/user/wyh/TNC/traj_dealer/diff_traj/diff1_30w_traj.txt", "/nas/user/wyh/TNC/traj_dealer/diff_traj/diff1_30w_route.txt")
 
-    anomaly_data_process()
-
-
-
-class MMap:
-    def __init__(self, dir):
-        edgeFile = open(dir)
-        self.edgeDis = []
-        self.edgeNode = []
-        self.edgeCord = []
-        self.nodeSet = set()
-        self.nodeDict = {}
-        self.edgeDict = {}
-        self.edgeRevDict = {}
-        self.nodeEdgeDict = {}
-        self.nodeEdgeRevDict = {}
-        self.minLat = 1e18
-        self.maxLat = -1e18
-        self.minLon = 1e18
-        self.maxLon = -1e18
-        self.edgeNum = 0
-        self.nodeNum = 0
-        # self.RNodeDict = {}
-        # self.RNodeRevDict = {}
-
-        self.edge_to_cluster = {}
-        self.cluster_to_edge = {}
-        self.cluster_neighbor = {}
-        self.cluster_neighbor_edge = {}
-        self.cluster_neighbor_cluster = {}
-
-        self.o_to_n = {}
-        self.n_to_o = {}
-
-        for line in edgeFile.readlines():
-            item_list = line.strip().split()
-
-            oid = int(item_list[0])
-            self.o_to_n[oid] = self.edgeNum
-            self.n_to_o[self.edgeNum] = oid
-
-            a = int(item_list[1])
-            b = int(item_list[2])
-            self.edgeNode.append((a, b))
-            self.nodeDict[a] = b
-            if a not in self.nodeEdgeDict:
-                self.nodeEdgeDict[a] = []
-            if b not in self.nodeEdgeRevDict:
-                self.nodeEdgeRevDict[b] = []
-            self.nodeEdgeDict[a].append(self.edgeNum)
-            self.nodeEdgeRevDict[b].append(self.edgeNum)
-            self.nodeSet.add(a)
-            self.nodeSet.add(b)
-            num = int(item_list[3])
-            dist = 0
-            # print (item_list)
-            self.edgeCord.append(list(map(float, item_list[4:])))
-            for i in range(num):
-                tmplat = float(item_list[4 + i * 2])
-                tmplon = float(item_list[5 + i * 2])
-                self.minLat = min(self.minLat, tmplat)
-                self.maxLat = max(self.maxLat, tmplat)
-                self.minLon = min(self.minLon, tmplon)
-                self.maxLon = max(self.maxLon, tmplon)
-
-            for i in range(num - 1):
-                dist += self.calSpatialDistance(float(item_list[4 + i * 2]), float(item_list[5 + i * 2]),
-                                                float(item_list[6 + i * 2]), float(item_list[7 + i * 2]))
-            self.edgeDis.append(dist)
-            self.edgeNum += 1
-
-        # 读入数据集结束
-        # 交叉路口数目
-        self.nodeNum = len(self.nodeSet)
-
-        # 路段ID
-        # 路段-路段表示开始
-        for eid in range(self.edgeNum):
-            self.edgeRevDict[eid] = []
-            # self.RNodeRevDict[eid] = []
-
-        # 构建图; edgeDict存储了路段的连通关系
-        # edgeDict[a] = b 代表路段a指向路段b的有向连接
-        for eid in range(self.edgeNum):
-            # a，b存放路段的起止ID
-            a, b = self.edgeNode[eid]
-            self.edgeDict[eid] = []
-            # self.RNodeDict[eid] = []
-            if b in self.nodeEdgeDict:
-                for nid in self.nodeEdgeDict[b]:
-                    self.edgeDict[eid].append(nid)
-                    self.edgeRevDict[nid].append(eid)
-                    # if nid in self.nodeEdgeRevDict:
-                    #     for Rnid in self.nodeEdgeRevDict[nid]:
-                    #         self.RNodeDict[eid].append(Rnid)
-                    #         self.RNodeRevDict[Rnid].append(eid)
-
-        # print(self.edgeDict[0])
-        # self.igraph = igraph.Graph(directed=True)
-        #  self.igraph.add_vertices(self.nodeNum)
-        edge_list = []
-        edge_weight_list = []
-        for eid in range(self.edgeNum):
-            a, b = self.edgeNode[eid]
-            if (a == b):
-                continue
-            edge_list.append((a, b))
-            edge_weight_list.append(self.edgeDis[eid])
-
-        # self.igraph.add_edges(edge_list)
-        #   self.igraph.es['dis'] = edge_weight_list
-
-        print('edge Num: ', self.edgeNum)
-        print('node Num: ', self.nodeNum)
-
-        self.wayType = {}
-
-    def calSpatialDistance(self, x1, y1, x2, y2):
-        lat1 = (math.pi / 180.0) * x1
-        lat2 = (math.pi / 180.0) * x2
-        lon1 = (math.pi / 180.0) * y1
-        lon2 = (math.pi / 180.0) * y2
-        R = 6378.137
-        t = math.sin(lat1) * math.sin(lat2) + math.cos(lat1) * math.cos(lat2) * math.cos(lon2 - lon1)
-        if t > 1.0:
-            t = 1.0
-        d = math.acos(t) * R * 1000
-        return d
-
-
-    def shortestPathAll(self, start, end=-1, with_route=False):
-        pq = PriorityQueue()
-        pq.put((0, start))
-        ans = []
-        dist = [1e18 for i in range(self.edgeNum)]
-        pred = [1e18 for i in range(self.edgeNum)]
-        dist[start] = self.edgeDis[start]
-        pred[start] = -1
-        nodeset = {}
-        ans.append(start)
-        while (pq.qsize()):
-            dis, id = pq.get()
-            if id == end:
-                break
-            if id not in nodeset:
-                nodeset[id] = 1
-            else:
-                continue
-            for nid in self.edgeDict[id]:
-                # if (nid in self.valid_edge):
-                if dist[nid] > dist[id] + self.edgeDis[nid]:
-                    dist[nid] = dist[id] + self.edgeDis[nid]
-                    pred[nid] = id
-                    pq.put((dist[nid], nid))
-        if not with_route:
-            pred = []
-        if end != -1:
-            return dist[end], pred
-        return dist, pred
-
-    def shortestPath(self, start, end, with_route=True):
-        dis, pred = self.shortestPathAll(start, end, with_route)
-
-        if end == -1:
-            return dis, pred
-
-        if with_route:
-            id = end
-            # print ('route: ')
-            arr = [id]
-            while (pred[id] >= 0 and pred[id] < 1e18):
-                #  print (pred[id],end=',')
-                id = pred[id]
-                arr.append(id)
-            arr = list(reversed(arr))
-            # 去掉首尾元素
-            new_arr = arr[1:-1]
-        #    arr = [self.valid_edge[item] for item in arr]
-            return dis, new_arr
-        else:
-            return dis
-
-    def route(self, mmdir):
-        mmFile = open(mmdir)
-        # route_arr = []
-        tmp_e = -1
-        eid = []
-        n = 1
-        org_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai",
-                      zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-
-        for line in mmFile.readlines():
-            item_list = line.strip().split()
-            id_time = int(item_list[0])
-            if id_time < 0:
-                with open("/nas/user/wyh/essential_generate/draw/try.txt", 'a') as f:
-                    f.write(str(org_map.convert2_edge_num(eid[0])) + " ")
-                    length = len(eid)
-                    for i in range(1, length):
-                        d, temp = self.shortestPath(eid[i-1], eid[i])
-                        for elem in temp:
-                            f.write(str(org_map.convert2_edge_num(elem)) + " ")
-                        f.write(str(org_map.convert2_edge_num(eid[i])) + " ")
-                    f.write("\n" + "-" + str(n) + "\n")
-                    n += 1
-                    eid.clear()
-                    continue
-            e = int(item_list[3])
-            e = org_map.convert2_valid_num(e)
-            if e != tmp_e:
-                tmp_e = e
-                eid.append(e)
-
-    def diff_route(self, mmdir):
-        mmFile = open(mmdir)
-        # route_arr = []
-        tmp_e = -1
-        eid = []
-        n = 1
-        # org_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai",
-        #               zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
-
-        for line in mmFile.readlines():
-            item_list = line.strip().split()
-            id_time = int(item_list[0])
-            if id_time < 0:
-                with open("/nas/user/wyh/essential_generate/draw/diff_try.txt", 'a') as f:
-                    f.write(str(self.n_to_o[eid[0]]) + " ")
-                    length = len(eid)
-                    for i in range(1, length):
-                        d, temp = self.shortestPath(eid[i-1], eid[i])
-                        for elem in temp:
-                            f.write(str(self.n_to_o[elem]) + " ")
-                        f.write(str(self.n_to_o[eid[i]]) + " ")
-                    f.write("\n" + "-" + str(n) + "\n")
-                    n += 1
-                    eid.clear()
-                    continue
-            e = int(item_list[3])
-            # e = org_map.convert2_valid_num(e)
-            e = self.o_to_n[e]
-            if e != tmp_e:
-                tmp_e = e
-                eid.append(e)
+    # anomaly_data_process()
+    trans_map("/nas/user/wyh/TNC/traj_dealer/diff_map/diff1_map.txt")
