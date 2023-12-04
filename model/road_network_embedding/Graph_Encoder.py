@@ -81,34 +81,45 @@ from GAT import RouteEmbedding
 #         test_times_data.append(x[-1]-x[0])
 
 
-# class GATDataset(Dataset):
-#     def __init__(self, x, padding_masks, g, n_feat):
-#         self.x = x
-#         self.padding_masks = padding_masks
-#         self.g = g
-#         self.n_feat = n_feat
+class GATDataset(Dataset):
+    def __init__(self, x, padding_masks, g, n_feat):
+        self.x = x
+        self.padding_masks = padding_masks
+        self.g = g
+        self.n_feat = n_feat
 
-#     def __len__(self):
-#         return len(self.x)
+    def __len__(self):
+        return len(self.x)
 
-#     def __getitem__(self, idx):
-#         return {
-#             'x': self.x[idx],
-#             'padding_masks': self.padding_masks[idx],
-#             'g': self.g[idx],
-#             'n_feat': self.n_feat[idx]
-#         }
+    def __getitem__(self, idx):
+        return {
+            'x': self.x[idx],
+            'padding_masks': self.padding_masks[idx],
+            'g': self.g,
+            'n_feat': self.n_feat
+        }
+    
+def collate(samples):
+    """
+    batch数据处理函数，将batch数据处理为dataloader的输出格式。
 
+    参数:
+        samples (list): batch数据
 
-# def create_data_loader(dataset, batch_size):
-#     return DataLoader(
-#         dataset,
-#         batch_size=batch_size,
-#         shuffle=True
-#     )
-
-# dataset = GATDataset(x, padding_masks, g, n_feat)
-# data_loader = create_data_loader(dataset, batch_size=16)
+    返回:
+        dict: batch数据
+    """
+    batch = {}
+    # print(samples)
+    batch['x'] = pad_sequence([torch.tensor(sample['x']) for sample in samples], padding_value=0, batch_first=True)
+    pm = batch['x'].ne(0)
+    # batch['padding_masks'] = ~pm
+    batch['padding_masks'] = pm
+    # batch['g'] = dgl.batch([sample['g'] for sample in samples])
+    batch['g'] = samples[0]['g']
+    # batch['n_feat'] = pad_sequence([torch.tensor(sample['n_feat']) for sample in samples], padding_value=0, batch_first=True)
+    batch['n_feat'] = samples[0]['n_feat']
+    return batch
 
 def get_padding_mask(time_series, pad_value=0):
     """
@@ -131,25 +142,41 @@ if __name__ == '__main__':
     g = dgl.graph((src, dst))
     # 7为图的节点数目，1为节点特征的维度
     n_feat = torch.randn((7, 1))
-    x = torch.tensor([[1, 2, 1, 6, 2], [1, 2, 6, 6, 1]])
-
-    # map_graph = GraphEncoder(feature_dim=1, node_input_dim=1, node_hidden_dim=64, output_dim=64, edge_input_dim=0, num_layers=2, num_heads=8, norm=False)
-    # map_graph = RouteEmbedding(d_model=64,dropout=0.1, add_pe=True,node_fea_dim=1, add_gat=True, norm = True)
-    # output1 = map_graph(x, g, n_feat)
-    # output2 = map_graph(x, g, n_feat)
-
-    # print(output1)
-    # print(output2)
+    # print("n_feat: ", n_feat)
     config = {'key': 'value'}
     data_feature = {'key': 'value'}
     model_train = BERT(config, data_feature)
 
-    padding_mask = get_padding_mask(x)
-    # print(padding_mask)
+    # 假设我们有以下数据
+    x = torch.tensor([[1, 2, 1, 6, 0], [1, 2, 6, 6, 3], [1, 1, 1,0, 0], [1, 2, 6, 6, 3]])
+    padding_masks = [None, None, None, None]
+    # g = [g, g, g, g]
+    # n_feat = [n_feat, n_feat, n_feat, n_feat]
+    # 创建 Dataset 对象
+    dataset = GATDataset(x, padding_masks, g, n_feat)
 
-    ans = model_train(x, padding_mask, g, n_feat)
-    print(ans[0])
-    print(ans[0].shape)
+    # 创建 DataLoader 对象
+    dataloader = DataLoader(dataset, batch_size=2, collate_fn=collate)
+
+    # print(dataloader)
+    for i, batch in enumerate(dataloader):
+        # print(f"Batch {i}:")
+        # print(batch)
+        # print(batch['x'].size())
+        # print(batch['x'])
+        # print(batch['padding_masks'].size())
+        # print(batch['padding_masks'])
+        # print(batch['g'])
+        # print(batch['n_feat'])
+        ans = model_train(batch['x'], batch['padding_masks'], batch['g'], batch['n_feat'])
+        print(ans)
+
+    # padding_mask = get_padding_mask(x)
+    # # print(padding_mask)
+
+    # ans = model_train(x, padding_mask, g, n_feat)
+    # print(ans[0])
+    # print(ans[0].shape)
     # num_epochs = 30 # 训练轮数
     # print('Training Start')
     # for epoch in range(num_epochs):
