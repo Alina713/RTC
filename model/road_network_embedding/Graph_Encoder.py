@@ -22,12 +22,31 @@ from torch.utils.data import DataLoader
 from GAT import BERT
 from GAT import RouteEmbedding
 
+
+def compute_degree_features(graph):
+    """
+    Args:
+        graph: dgl graph
+    Returns:
+        in_degree: (vocab_size, )
+        out_degree: (vocab_size, )
+    """
+    in_degree = graph.in_degrees(range(graph.number_of_nodes())).float().unsqueeze(1)  # (vocab_size, 1)
+    out_degree = graph.out_degrees(range(graph.number_of_nodes())).float().unsqueeze(1)  # (vocab_size, 1)
+    degree_features = torch.cat([in_degree, out_degree], dim=1)  # (vocab_size, 2)
+    return degree_features
+
+
 SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
 dgl_SH_map = SH_map.dgl_valid_map()
-adj = dgl_SH_map.adj().to_dense()
-# print(adj.shape)
-# # torch.Size([57254, 57254])
-tmp_n_feat = torch.randn((57254, 1))
+
+tmp_n_feat = compute_degree_features(dgl_SH_map)
+# print(tmp_n_feat.shape)
+
+# adj = dgl_SH_map.adj().to_dense()
+# # print(adj.shape)
+# # # torch.Size([57254, 57254])
+# tmp_n_feat = torch.randn((57254, 1))
 
 
 # 数据预处理
@@ -38,8 +57,7 @@ test_data = pd.read_csv("/nas/user/wyh/TNC/data/ETA/GAT_transformer/SHmap_norm_t
 # 将字符串转换为数字列表，并计算每个序列的长度
 # train_trajectory_data = [list(map(int, x.strip('[]').split(','))) for x in train_data.iloc[:,1].values]
 train_trajectory_data = [[int(y) for y in x.strip('[]').split(',') if int(y) != -999] for x in train_data.iloc[:,1].values]
-# train_trajectory_data = [[1] if not sublist else sublist for sublist in train_trajectory_data]
-# train_trajectory_data = [sublist for sublist in train_trajectory_data if sublist]
+train_trajectory_data = [x for x in train_trajectory_data if -999 not in x]
 train_padding_masks = [None for _ in range(len(train_trajectory_data))]
 train_time_data = [list(map(int, x.strip('[]').split(','))) for x in train_data.iloc[:, 2].values]
 # 有-999的情况出现
@@ -50,14 +68,14 @@ for x in train_time_data:
         # train_times_data.append(0)
         continue
     elif x[-1]== -999:
-        train_times_data.append(x[-2]-x[0])
+        # train_times_data.append(x[-2]-x[0])
+        continue
     else:
         train_times_data.append(x[-1]-x[0])
 
 # valid_trajectory_data = [list(map(int, x.strip('[]').split(','))) for x in valid_data.iloc[:,1].values]
 valid_trajectory_data = [[int(y) for y in x.strip('[]').split(',') if int(y) != -999] for x in valid_data.iloc[:,1].values]
-# valid_trajectory_data = [[1] if not sublist else sublist for sublist in valid_trajectory_data]
-# valid_trajectory_data = [sublist for sublist in valid_trajectory_data if sublist]
+valid_trajectory_data = [x for x in valid_trajectory_data if -999 not in x]
 valid_padding_masks = [None for _ in range(len(valid_trajectory_data))]
 valid_time_data = [list(map(int, x.strip('[]').split(','))) for x in valid_data.iloc[:, 2].values]
 valid_times_data = []
@@ -66,7 +84,8 @@ for x in valid_time_data:
         # valid_times_data.append(0)
         continue
     elif x[-1]== -999:
-        valid_times_data.append(x[-2]-x[0])
+        # valid_times_data.append(x[-2]-x[0])
+        continue
     else:
         valid_times_data.append(x[-1]-x[0])
 
@@ -76,6 +95,7 @@ test_trajectory_data = [[int(y) for y in x.strip('[]').split(',') if int(y) != -
 # 把[]改成[1]，但可能存在路口为1的情况
 # test_trajectory_data = [[1] if not sublist else sublist for sublist in test_trajectory_data]
 # test_trajectory_data = [sublist for sublist in test_trajectory_data if sublist]
+test_trajectory_data = [x for x in test_trajectory_data if -999 not in x]
 test_padding_masks = [None for _ in range(len(test_trajectory_data))]
 test_time_data = [list(map(int, x.strip('[]').split(','))) for x in test_data.iloc[:, 2].values]
 test_times_data = []
@@ -84,7 +104,8 @@ for x in test_time_data:
         # test_times_data.append(0)
         continue
     elif x[-1]== -999:
-        test_times_data.append(x[-2]-x[0])
+        # test_times_data.append(x[-2]-x[0])
+        continue
     else:
         test_times_data.append(x[-1]-x[0])
 
@@ -200,7 +221,7 @@ class Route_gattrans_TimePred_train():
         data_feature = {'key': 'value'}
         self.eta_model = LinearETA(config=config, data_feature=data_feature).cuda(1)
         # set learning_rate
-        self.optimizer = torch.optim.Adam(self.eta_model.parameters(), lr=0.01)
+        self.optimizer = torch.optim.Adam(self.eta_model.parameters(), lr=0.001)
 
         self.min_dict = {}
         self.min_dict['min_valid_mape'] = 1e18
@@ -219,7 +240,7 @@ class Route_gattrans_TimePred_train():
             self.optimizer.step()
             print(f"Train mape_Loss: {mape_loss.item():.4f}, Train mae_loss: {mae_loss.item():.4f}")
             # assert 2==1, 'stop'
-            if ((iter + 1) % 1000 == 0):
+            if ((iter + 1) % 100 == 0):
                 valid_mape, valid_mae = self.valid()
                 if self.min_dict['min_valid_mape'] > valid_mape:
                     self.min_dict['min_valid_mape'] = valid_mape
@@ -233,7 +254,7 @@ class Route_gattrans_TimePred_train():
                     }, '/nas/user/wyh/TNC/model/eta_data/gat.model.pth.tar')
 
                 self.eta_model.train()
-            if (iter + 1) % 1000 == 0:
+            if (iter + 1) % 100 == 0:
                 print('mape: ', mape_loss.item(), 'mae: ', mae_loss.item(), 'valid mape: ', self.min_dict['min_valid_mape'], ' valid mae: ',self.min_dict['min_valid_mae'])
             iter += 1
 
@@ -300,7 +321,7 @@ if __name__ == '__main__':
         print ('epoch: ',epoch)
         model_train.train()
 
-    model_train.test()
+    # model_train.test()
     # # 定义边的起点和终点
     # src = torch.tensor([0, 1, 2, 1, 6])
     # dst = torch.tensor([1, 2, 0, 6, 1])
