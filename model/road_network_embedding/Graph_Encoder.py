@@ -164,11 +164,11 @@ class LinearETA(nn.Module):
                 output_hidden_states=False, output_attentions=False):
         # import pdb
         # pdb.set_trace()
-        x = x.long().cuda(1)
-        padding_masks = padding_masks.cuda(1)
-        g = g.to('cuda:1')
-        n_feat = n_feat.cuda(1)
-        travel_time = travel_time.cuda(1)
+        x = x.long().cuda()
+        padding_masks = padding_masks.cuda()
+        g = g.to('cuda:0')
+        n_feat = n_feat.cuda()
+        travel_time = travel_time.cuda()
 
         token_emb, _, _ = self.model(x=x, padding_masks=padding_masks,
                               g=g, n_feat=n_feat,
@@ -179,26 +179,14 @@ class LinearETA(nn.Module):
                 token_emb.size()).float()  # (batch_size, seq_length, d_model)
         sum_embeddings = torch.sum(token_emb * input_mask_expanded, 1)
         sum_mask = input_mask_expanded.sum(1)
-        # print(sum_mask)
-        # print(sum_mask.shape)
         sum_mask = torch.clamp(sum_mask, min=1e-9)
-        # print(sum_mask)
-        # print(sum_mask.shape)
         traj_emb = sum_embeddings / sum_mask  # (batch_size, feat_dim)
         eta_pred = self.linear(traj_emb)  # (B, 1)
         eta_pred = eta_pred.squeeze(1) # (B)
-        # print(eta_pred)
-        # print(eta_pred.shape)
-        # print(travel_time)
-        # print(travel_time.shape)
-        # print(eta_pred - travel_time)
         
         mape_loss = torch.abs(eta_pred - travel_time) / (travel_time + 1e-9)
         mae_loss = torch.abs(eta_pred - travel_time)
-        # print(mape_loss.mean())
-        # print(mae_loss.mean())
 
-        # assert 2==1, 'stop'
         return mape_loss.mean(), mae_loss.mean()
 
 
@@ -219,7 +207,7 @@ class Route_gattrans_TimePred_train():
 
         config = {'key': 'value'}
         data_feature = {'key': 'value'}
-        self.eta_model = LinearETA(config=config, data_feature=data_feature).cuda(1)
+        self.eta_model = LinearETA(config=config, data_feature=data_feature).cuda()
         # set learning_rate
         self.optimizer = torch.optim.Adam(self.eta_model.parameters(), lr=0.001)
 
@@ -233,8 +221,6 @@ class Route_gattrans_TimePred_train():
         iter = 0
         for i, batch in tqdm.tqdm(enumerate(self.train_loader)):
             mape_loss, mae_loss = self.eta_model(batch['x'], batch['padding_masks'], batch['g'], batch['n_feat'], batch['travel_time'])
-        # for input in tqdm.tqdm(self.train_loader):
-        #     mape_loss, mae_loss = self.eta_model(*input)
             self.optimizer.zero_grad()
             mape_loss.backward()
             self.optimizer.step()
@@ -267,8 +253,7 @@ class Route_gattrans_TimePred_train():
 
             for i, batch in tqdm.tqdm(enumerate(self.valid_loader)):
                 mape, mae = self.eta_model(batch['x'], batch['padding_masks'], batch['g'], batch['n_feat'], batch['travel_time'])
-            # for input in tqdm.tqdm(self.valid_loader):
-            #     mape, mae = self.eta_model(*input)
+
                 # trick-1: 去除异常值
                 if mape.item() > 20:
                     continue
@@ -276,9 +261,6 @@ class Route_gattrans_TimePred_train():
                     avg_mape += mape.item()
                     avg_mae += mae.item()
                     avg_cnt += 1
-                # avg_mape += mape.item()
-                # avg_mae += mae.item()
-                # avg_cnt += 1
 
             print ('valid mape: ', avg_mape / avg_cnt, ' valid mae: ',avg_mae / avg_cnt)
         return avg_mape / avg_cnt, avg_mae / avg_cnt
@@ -321,53 +303,4 @@ if __name__ == '__main__':
         print ('epoch: ',epoch)
         model_train.train()
 
-    # model_train.test()
-    # # 定义边的起点和终点
-    # src = torch.tensor([0, 1, 2, 1, 6])
-    # dst = torch.tensor([1, 2, 0, 6, 1])
-    # g = dgl.graph((src, dst))
-    # # 7为图的节点数目，1为节点特征的维度
-    # n_feat = torch.randn((7, 1))
-    # # print("n_feat: ", n_feat)
-    # config = {'key': 'value'}
-    # data_feature = {'key': 'value'}
-    # model_train = BERT(config, data_feature)
-
-    # # 假设我们有以下数据
-    # x = torch.tensor([[1, 2, 1, 6, 0], [1, 2, 6, 6, 3], [1, 1, 1, 0, 0], [1, 2, 6, 6, 3]])
-    # print(x.shape)
-    # padding_masks = [None for _ in range(x.shape[0])]
-    # print(padding_masks)
-    # # 创建 Dataset 对象
-    # dataset = GATDataset(x, padding_masks, g, n_feat)
-
-    # # 创建 DataLoader 对象
-    # dataloader = DataLoader(dataset, batch_size=2, collate_fn=collate)
-    # dataloader2 = DataLoader(dataset, batch_size=1, collate_fn=collate)
-
-    # # print(dataloader)
-    # for i, batch in enumerate(dataloader):
-    #     print(batch['x'].shape)
-    #     # ans = model_train(batch['x'], batch['padding_masks'], batch['g'], batch['n_feat'])
-    #     # print(ans)
-
-    # print("dataloader2")
-
-
-    # for i, batch in enumerate(dataloader2):
-    #     print(batch['x'].shape)
-        # ans = model_train(batch['x'], batch['padding_masks'], batch['g'], batch['n_feat'])
-        # print(ans)
-    # padding_mask = get_padding_mask(x)
-    # # print(padding_mask)
-
-    # ans = model_train(x, padding_mask, g, n_feat)
-    # print(ans[0])
-    # print(ans[0].shape)
-    # num_epochs = 30 # 训练轮数
-    # print('Training Start')
-    # for epoch in range(num_epochs):
-    #     print ('epoch: ',epoch)
-    #     model_train.train()
-
-    # model_train.test()
+    model_train.test()

@@ -17,7 +17,6 @@ import copy
 import random
 from logging import getLogger
 
-# from torch.autograd import Variable
 
 def drop_path_func(x, drop_prob=0., training=False):
     """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
@@ -98,9 +97,10 @@ class UnsupervisedGAT(nn.Module):
                     out_feats=node_hidden_dim // num_heads,
                     num_heads=num_heads,
                     feat_drop=0.0,
-                    attn_drop=0.0,
-                    residual=False,
+                    attn_drop=0.6,
+                    residual=True,
                     activation=F.leaky_relu if i + 1 < num_layers else None,
+                    # activation = nn.ELU() if i + 1 < num_layers else None,
                     # 允许路口编号不连续
                     allow_zero_in_degree=True,
                 )
@@ -380,9 +380,9 @@ class BERT(nn.Module):
 
         self.config = config
 
-        self.vocab_size = data_feature.get('vocab_size', 1)
+        self.vocab_size = data_feature.get('vocab_size', 2)
         # self.node_fea_dim = data_feature.get('node_fea_dim')
-        self.node_fea_dim = data_feature.get('node_fea_dim', 1)
+        self.node_fea_dim = data_feature.get('node_fea_dim', 2)
 
         # d,model 必须可以整除 n_layers
         self.d_model = self.config.get('d_model', 768)
@@ -396,9 +396,9 @@ class BERT(nn.Module):
         self.type_ln = self.config.get('type_ln', 'pre')
         # 如果 `add_cls` 为 `True`，则在生成 `future_mask` 时，可能会将 `[CLS]` token 对应的位置设置为 `False`，即允许模型在生成 `[CLS]` token 的输出时，
         # 查看整个输入序列的信息。这是因为 `[CLS]` token 的输出通常被用作整个序列的聚合表示，所以需要考虑整个序列的信息。
-        self.future_mask = self.config.get('future_mask', False)
+        self.future_mask = self.config.get('future_mask', True)
         # False
-        self.add_cls = self.config.get('add_cls', True)
+        self.add_cls = self.config.get('add_cls', False)
         # self.device = self.config.get('device', torch.device('cpu'))
         self.device = self.config.get('device', torch.device('cuda:0'))
         self.add_pe = self.config.get('add_pe', True)
@@ -454,6 +454,10 @@ class BERT(nn.Module):
                 all_self_attentions.append(attn_score)
         return embedding_output, all_hidden_states, all_self_attentions  # (B, T, d_model), list of (B, T, d_model), list of (B, head, T, T)
 
+
+
+
+
 def get_padding_mask(time_series, pad_value=0):
     """
     根据时间序列获取padding mask。
@@ -463,9 +467,9 @@ def get_padding_mask(time_series, pad_value=0):
         pad_value (int): 填充值，默认为0
 
     返回:
-        np.array: padding mask，和时间序列形状相同，填充位置为True，非填充位置为False
+        np.array: padding mask，和时间序列形状相同，填充位置为False，非填充位置为True
     """
-    return time_series == pad_value
+    return time_series != pad_value
 
 
 if __name__ == '__main__':
