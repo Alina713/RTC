@@ -28,20 +28,46 @@ train_td = []
 train_atd = []
 valid_td = []
 valid_atd = []
-n = 0
+# n = 0
+# m = 0
+# max_len1 = 0
+# max_len2 = 0
 
 for i in range(train_cnt):
     if (-999 not in train_trajectory_data[i]) and (-999 not in aug_train_trajectory_data[i]):
-        train_td.append(train_trajectory_data[i])
-        train_atd.append(aug_train_trajectory_data[i])
+        if(len(train_trajectory_data[i]) > 20) and (len(train_trajectory_data[i]) < 128):
+            # n += 1
+            train_td.append(train_trajectory_data[i])
+            train_atd.append(aug_train_trajectory_data[i])
+            # if len(aug_train_trajectory_data[i]) > max_len1:
+            #     max_len1 = len(aug_train_trajectory_data[i])
 
 for i in range(valid_cnt):
     if (-999 not in valid_trajectory_data[i]) and (-999 not in aug_valid_trajectory_data[i]):
-        valid_td.append(valid_trajectory_data[i])
-        valid_atd.append(aug_valid_trajectory_data[i])
+        if(len(valid_trajectory_data[i]) > 20) and (len(valid_trajectory_data[i]) < 128):
+            # m += 1
+            valid_td.append(valid_trajectory_data[i])
+            valid_atd.append(aug_valid_trajectory_data[i])
+            # if len(aug_valid_trajectory_data[i]) > max_len2:
+            #     max_len2 = len(aug_valid_trajectory_data[i])
 
 # print(n)
-# # 200251
+# print(m)
+# # # 200251
+# print(len(train_td))
+# print(len(train_atd))
+# print(len(valid_td))
+# print(len(valid_atd))
+# print(max_len1)
+# print(max_len2)
+# 113875
+# 16293
+# 113875
+# 113875
+# 16293
+# 16293
+# 495
+# 434
         
 
 def output_trajs(trajs, out_file_path):
@@ -54,7 +80,7 @@ def output_trajs(trajs, out_file_path):
         out_file_path.write('\n')
         id += 1
 
-output_trajs(train_td, open("/nas/user/wyh/TNC/data/align_data/SH/SH_train.csv", 'w+'))
-# output_trajs(train_atd, open("/nas/user/wyh/TNC/data/align_data/SH/SH_aug_train.csv", 'w+'))
-output_trajs(valid_td, open("/nas/user/wyh/TNC/data/align_data/SH/SH_valid.csv", 'w+'))
-# output_trajs(valid_atd, open("/nas/user/wyh/TNC/data/align_data/SH/SH_aug_valid.csv", 'w+'))
+output_trajs(train_td, open("/nas/user/wyh/TNC/data/align_data/norm_SH/SH_train.csv", 'w+'))
+output_trajs(train_atd, open("/nas/user/wyh/TNC/data/align_data/norm_SH/SH_aug_train.csv", 'w+'))
+output_trajs(valid_td, open("/nas/user/wyh/TNC/data/align_data/norm_SH/SH_valid.csv", 'w+'))
+output_trajs(valid_atd, open("/nas/user/wyh/TNC/data/align_data/norm_SH/SH_aug_valid.csv", 'w+'))
