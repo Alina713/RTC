@@ -10,6 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dgl.nn.pytorch import GATConv
+# from dgl.nn.pytorch import GATv2Conv
+# from dgl.nn.pytorch import TransformerConv
 
 import math
 import numpy as np
@@ -88,12 +90,12 @@ class UnsupervisedGAT(nn.Module):
     ):
         super(UnsupervisedGAT, self).__init__()
         assert node_hidden_dim % num_heads == 0
-        self.in_dims = [node_input_dim if i == 0 else node_hidden_dim for i in range(num_layers)]
+        # self.in_dims = [node_input_dim if i == 0 else node_hidden_dim for i in range(num_layers)]
         self.layers = nn.ModuleList(
             [
                 GATConv(
-                    in_feats=self.in_dims[i],
-                    # in_feats=node_input_dim if i == 0 else node_hidden_dim,
+                    # in_feats=self.in_dims[i],
+                    in_feats=node_input_dim if i == 0 else node_hidden_dim,
                     out_feats=node_hidden_dim // num_heads,
                     num_heads=num_heads,
                     feat_drop=0.0,
@@ -120,12 +122,11 @@ class UnsupervisedGAT(nn.Module):
 # 标准化GAT
 class GraphEncoder(nn.Module):
     def __init__(
-        self, feature_dim, node_input_dim, node_hidden_dim, output_dim, edge_input_dim=0, num_layers=2, num_heads=8, norm=True
+        self, feature_dim, node_input_dim, node_hidden_dim, output_dim, 
+        edge_input_dim=0, num_layers=2, num_heads=8, norm=True
     ):
         super(GraphEncoder, self).__init__()
         self.d_model = node_hidden_dim
-
-        self.linear_in = nn.Linear(feature_dim, node_input_dim)
 
         self.gnn = UnsupervisedGAT(
             node_input_dim=node_input_dim,
@@ -138,6 +139,9 @@ class GraphEncoder(nn.Module):
         self.projection = nn.Sequential(nn.Linear(node_hidden_dim, node_hidden_dim),
                                         nn.ReLU(),
                                         nn.Linear(node_hidden_dim, output_dim))
+        
+        # g的number_of_nodes()是路口的数量 57254
+        self.fea_encoder = nn.Embedding(57254, node_input_dim)
 
     def forward(self, g, n_feat, x):
         '''
@@ -146,16 +150,17 @@ class GraphEncoder(nn.Module):
             g: dgl format of Map
             * ShangHai
             node_features: (vocab_size, fea_dim)
-            * ShangHai (57524, 1)
+            * ShangHai (57254, 1)
             x: (B, T)
             * ShangHai (64,Sequence length)
         Returns:
             (B, T, d_model)
         '''
-        n_feat = self.linear_in(n_feat)
+        n_feat = self.fea_encoder(n_feat)
 
         e_feat = None
         v = self.gnn(g, n_feat, e_feat)
+        ab = v.shape
         if self.norm:
             v = F.normalize(v, p=2, dim=-1, eps=1e-5)
 
@@ -186,7 +191,7 @@ class RouteEmbedding(nn.Module):
         self.add_gat = add_gat
 
         if self.add_gat:
-            self.token_embedding = GraphEncoder(feature_dim=node_fea_dim, node_input_dim=16, node_hidden_dim=d_model,
+            self.token_embedding = GraphEncoder(feature_dim=node_fea_dim, node_input_dim=64, node_hidden_dim=d_model,
                                                 output_dim=d_model, edge_input_dim=0, num_layers=2, num_heads=8, norm=norm)
         if self.add_pe:
             self.position_embedding = PositionalEmbedding(d_model=d_model)
@@ -382,9 +387,9 @@ class BERT(nn.Module):
 
         self.vocab_size = data_feature.get('vocab_size', 2)
         # self.node_fea_dim = data_feature.get('node_fea_dim')
-        self.node_fea_dim = data_feature.get('node_fea_dim', 2)
+        self.node_fea_dim = data_feature.get('node_fea_dim', 1)
 
-        # d,model 必须可以整除 n_layers
+        # d_model 必须可以整除 attn_heads
         self.d_model = self.config.get('d_model', 768)
         self.n_layers = self.config.get('n_layers', 12)
         self.attn_heads = self.config.get('attn_heads', 12)
@@ -393,14 +398,14 @@ class BERT(nn.Module):
         self.drop_path = self.config.get('drop_path', 0.3)
         self.lape_dim = self.config.get('lape_dim', 256)
         self.attn_drop = self.config.get('attn_drop', 0.1)
-        self.type_ln = self.config.get('type_ln', 'pre')
+        # pre改为post
+        self.type_ln = self.config.get('type_ln', 'post')
         # 如果 `add_cls` 为 `True`，则在生成 `future_mask` 时，可能会将 `[CLS]` token 对应的位置设置为 `False`，即允许模型在生成 `[CLS]` token 的输出时，
         # 查看整个输入序列的信息。这是因为 `[CLS]` token 的输出通常被用作整个序列的聚合表示，所以需要考虑整个序列的信息。
-        self.future_mask = self.config.get('future_mask', True)
-        # False
-        self.add_cls = self.config.get('add_cls', False)
-        # self.device = self.config.get('device', torch.device('cpu'))
-        self.device = self.config.get('device', torch.device('cuda:0'))
+        # False， 改
+        self.future_mask = self.config.get('future_mask', False)
+        self.add_cls = self.config.get('add_cls', True)
+        self.device = self.config.get('device', torch.device('cuda:1'))
         self.add_pe = self.config.get('add_pe', True)
         self.add_gat = self.config.get('add_gat', True)
         self.norm = self.config.get('norm', True)
@@ -455,6 +460,118 @@ class BERT(nn.Module):
         return embedding_output, all_hidden_states, all_self_attentions  # (B, T, d_model), list of (B, T, d_model), list of (B, head, T, T)
 
 
+class MLPLayer(nn.Module):
+    """
+    服务于cls
+    Head for getting sentence representations over RoBERTa/BERT's CLS representation.
+    GitHub Copilot: 这段代码定义了一个名为`MLPLayer`的PyTorch模块，它是一个简单的多层感知机（MLP）层。
+    以下是每一行代码的解释：
+    1. `class MLPLayer(nn.Module):` 定义了一个新的类，名为`MLPLayer`，它继承自`nn.Module`。`nn.Module`是PyTorch中所有神经网络模块的基类。
+    2. `def __init__(self, d_model):` 定义了类的初始化函数，它接受一个参数`d_model`，表示输入和输出的特征维度。
+    3. `super().__init__()` 调用父类的初始化函数，这是在定义新的PyTorch模块时的标准做法。
+    4. `self.dense = nn.Linear(d_model, d_model)` 定义了一个线性层，它的输入和输出特征维度都是`d_model`。
+    5. `self.activation = nn.Tanh()` 定义了一个激活函数，这里使用的是双曲正切函数。
+    6. `def forward(self, features):` 定义了前向传播函数，它接受一个参数`features`，表示输入的特征。
+    7. `x = self.dense(features)` 将输入的特征通过线性层进行变换。
+    8. `x = self.activation(x)` 将线性层的输出通过激活函数进行变换。
+    9. `return x` 返回变换后的特征。
+    总的来说，这个`MLPLayer`模块就是一个包含一个线性层和一个激活函数的简单神经网络层，它可以将输入的特征进行一次线性变换和非线性变换。
+    """
+
+    def __init__(self, d_model):
+        super().__init__()
+        self.dense = nn.Linear(d_model, d_model)
+        self.activation = nn.Tanh()
+
+    def forward(self, features):
+        x = self.dense(features)
+        x = self.activation(x)
+        return x
+
+
+class BERTPooler(nn.Module):
+
+    def __init__(self, config, data_feature):
+        super().__init__()
+
+        self.config = config
+
+        self.pooling = self.config.get('pooling', 'mean')
+        self.add_cls = self.config.get('add_cls', True)
+        self.d_model = self.config.get('d_model', 768)
+        self.linear = MLPLayer(d_model=self.d_model)
+
+        self._logger = getLogger()
+        self._logger.info("Building BERTPooler model")
+
+    def forward(self, bert_output, padding_masks, hidden_states=None):
+        """
+        Args:
+            bert_output: (batch_size, seq_length, d_model) torch tensor of bert output
+            padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
+            hidden_states: list of hidden, (batch_size, seq_length, d_model)
+        Returns:
+            output: (batch_size, feat_dim) feat_dim一般为d_model768
+
+        1. **max**：这种策略是对每个位置的向量取最大值。首先，将填充位置的向量设置为负无穷大，然后对每个位置的向量取最大值。这种策略的假设是，
+        最大值能够捕获到最重要的信息。
+        2. **avg_first_last**：这种策略是取第一个和最后一个位置的向量的平均值。首先，计算第一个和最后一个位置的向量的平均值，然后将这个平均值与
+        一个掩码相乘，将填充位置的值设置为0，然后对每个位置的值求和，最后将和除以非填充位置的数量。这种策略的假设是，第一个和最后一个位置的向量能够捕获到整个序列的信息。
+        3. **avg_top2**：这种策略是取最后两个位置的向量的平均值。具体的操作与`avg_first_last`相同，只是取的是最后两个位置的向量的平均值。这种策略的假设是，最后两
+        个位置的向量能够捕获到整个序列的信息。
+        这三种策略的主要区别在于它们选择的位置和操作方式。具体选择哪种策略，可能需要根据你的任务和数据进行实验来确定。
+        """
+        token_emb = bert_output  # (batch_size, seq_length, d_model)
+        if self.pooling == 'cls':
+            if self.add_cls:
+                return self.linear(token_emb[:, 0, :])  # (batch_size, feat_dim)
+            else:
+                raise ValueError('No use cls!')
+        elif self.pooling == 'cls_before_pooler':
+            if self.add_cls:
+                return token_emb[:, 0, :]  # (batch_size, feat_dim)
+            else:
+                raise ValueError('No use cls!')
+        elif self.pooling == 'mean':
+            input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+                token_emb.size()).float()  # (batch_size, seq_length, d_model)
+            sum_embeddings = torch.sum(token_emb * input_mask_expanded, 1)
+            sum_mask = input_mask_expanded.sum(1)
+            sum_mask = torch.clamp(sum_mask, min=1e-9)
+            return sum_embeddings / sum_mask  # (batch_size, feat_dim)
+        elif self.pooling == 'max':
+            input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+                token_emb.size()).float()  # (batch_size, seq_length, d_model)
+            token_emb[input_mask_expanded == 0] = float('-inf')  # Set padding tokens to large negative value
+            max_over_time = torch.max(token_emb, 1)[0]
+            return max_over_time  # (batch_size, feat_dim)
+        elif self.pooling == "avg_first_last":
+            first_hidden = hidden_states[0]  # (batch_size, seq_length, d_model)
+            last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
+            avg_emb = (first_hidden + last_hidden) / 2.0
+            input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+                avg_emb.size()).float()  # (batch_size, seq_length, d_model)
+            sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
+            sum_mask = input_mask_expanded.sum(1)
+            sum_mask = torch.clamp(sum_mask, min=1e-9)
+            return sum_embeddings / sum_mask  # (batch_size, feat_dim)
+        elif self.pooling == "avg_top2":
+            second_last_hidden = hidden_states[-2]  # (batch_size, seq_length, d_model)
+            last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
+            avg_emb = (second_last_hidden + last_hidden) / 2.0
+            input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+                avg_emb.size()).float()  # (batch_size, seq_length, d_model)
+            sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
+            sum_mask = input_mask_expanded.sum(1)
+            sum_mask = torch.clamp(sum_mask, min=1e-9)
+            return sum_embeddings / sum_mask  # (batch_size, feat_dim)
+        elif self.pooling == "all":
+            input_mask_expanded = padding_masks.unsqueeze(-1).expand(
+                token_emb.size()).float()  # (batch_size, seq_length, d_model)
+            sum_embeddings = torch.sum(token_emb * input_mask_expanded, 1)
+            return sum_embeddings  # (batch_size, feat_dim)
+        else:
+            raise ValueError('Error pooling type {}'.format(self.pooling))
 
 
 
@@ -478,260 +595,16 @@ if __name__ == '__main__':
     g = dgl.graph((src, dst))
     n_feat = torch.randn((7, 1))
     x = torch.tensor([[2, 6, 3, 1, 0], [1, 2, 1, 0, 0]])
-    config = {'key': 'value'}
-    data_feature = {'key': 'value'}
-    model_train = BERT(config, data_feature)
-
-    padding_mask = get_padding_mask(x)
-
-    ans = model_train(x, padding_mask, g, n_feat)
+    model = UnsupervisedGAT(node_input_dim=1, node_hidden_dim=16, edge_input_dim=0, num_layers=2, num_heads=8)
+    ans = model(g, n_feat)
+    print(ans.shape)
     print(ans)
-    print(ans[0].shape)
+    # config = {'key': 'value'}
+    # data_feature = {'key': 'value'}
+    # model_train = BERT(config, data_feature)
 
+    # padding_mask = get_padding_mask(x)
 
-
-# 下游任务，先不考虑
-# class BERTDownstream(nn.Module):
-
-#     def __init__(self, config, data_feature):
-#         super().__init__()
-
-#         self.config = config
-
-#         self.vocab_size = data_feature.get('vocab_size')
-#         self.usr_num = data_feature.get('usr_num')
-#         self.pooling = self.config.get('pooling', 'mean')
-#         self.d_model = self.config.get('d_model', 768)
-#         self.add_cls = self.config.get('add_cls', True)
-#         self.baseline_bert = self.config.get('baseline_bert', False)
-#         self.baseline_tf = self.config.get('baseline_tf', False)
-
-#         self._logger = getLogger()
-#         self._logger.info("Building BERTDownstream model")
-
-#         self.bert = BERT(config, data_feature)
-
-#     def forward(self, x, padding_masks, batch_temporal_mat=None,
-#                 graph_dict=None, output_hidden_states=False, output_attentions=False):
-#         """
-#         Args:
-#             x: (batch_size, seq_length, feat_dim) torch tensor of masked features (input)
-#             padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
-#         Returns:
-#             output: (batch_size, feat_dim)
-#         """
-#         if self.pooling in ['avg_first_last', 'avg_top2']:
-#             output_hidden_states = True
-#         token_emb, hidden_states, _ = self.bert(x=x, padding_masks=padding_masks,
-#                                                 batch_temporal_mat=batch_temporal_mat, graph_dict=graph_dict,
-#                                                 output_hidden_states=output_hidden_states,
-#                                                 output_attentions=output_attentions)  # (batch_size, seq_length, d_model)
-#         if self.pooling == 'cls' or self.pooling == 'cls_before_pooler':
-#             if self.add_cls:
-#                 return token_emb[:, 0, :]  # (batch_size, feat_dim)
-#             else:
-#                 raise ValueError('No use cls!')
-#         elif self.pooling == 'mean':
-#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-#                 token_emb.size()).float()  # (batch_size, seq_length, d_model)
-#             sum_embeddings = torch.sum(token_emb * input_mask_expanded, 1)
-#             sum_mask = input_mask_expanded.sum(1)
-#             sum_mask = torch.clamp(sum_mask, min=1e-9)
-#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
-#         elif self.pooling == 'max':
-#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-#                 token_emb.size()).float()  # (batch_size, seq_length, d_model)
-#             token_emb[input_mask_expanded == 0] = float('-inf')  # Set padding tokens to large negative value
-#             max_over_time = torch.max(token_emb, 1)[0]
-#             return max_over_time  # (batch_size, feat_dim)
-#         elif self.pooling == "avg_first_last":
-#             first_hidden = hidden_states[0]  # (batch_size, seq_length, d_model)
-#             last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
-#             avg_emb = (first_hidden + last_hidden) / 2.0
-#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-#                 avg_emb.size()).float()  # (batch_size, seq_length, d_model)
-#             sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
-#             sum_mask = input_mask_expanded.sum(1)
-#             sum_mask = torch.clamp(sum_mask, min=1e-9)
-#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
-#         elif self.pooling == "avg_top2":
-#             second_last_hidden = hidden_states[-2]  # (batch_size, seq_length, d_model)
-#             last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
-#             avg_emb = (second_last_hidden + last_hidden) / 2.0
-#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-#                 avg_emb.size()).float()  # (batch_size, seq_length, d_model)
-#             sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
-#             sum_mask = input_mask_expanded.sum(1)
-#             sum_mask = torch.clamp(sum_mask, min=1e-9)
-#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
-#         else:
-#             raise ValueError('Error pooling type {}'.format(self.pooling))
-
-
-# class MLPLayer(nn.Module):
-#     """
-#     Head for getting sentence representations over RoBERTa/BERT's CLS representation.
-#     """
-
-#     def __init__(self, d_model):
-#         super().__init__()
-#         self.dense = nn.Linear(d_model, d_model)
-#         self.activation = nn.Tanh()
-
-#     def forward(self, features):
-#         x = self.dense(features)
-#         x = self.activation(x)
-#         return x
-
-
-# class BERTPooler(nn.Module):
-
-#     def __init__(self, config, data_feature):
-#         super().__init__()
-
-#         self.config = config
-
-#         self.pooling = self.config.get('pooling', 'mean')
-#         self.add_cls = self.config.get('add_cls', True)
-#         self.d_model = self.config.get('d_model', 768)
-#         self.linear = MLPLayer(d_model=self.d_model)
-
-#         self._logger = getLogger()
-#         self._logger.info("Building BERTPooler model")
-
-#     def forward(self, bert_output, padding_masks, hidden_states=None):
-#         """
-#         Args:
-#             bert_output: (batch_size, seq_length, d_model) torch tensor of bert output
-#             padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
-#             hidden_states: list of hidden, (batch_size, seq_length, d_model)
-#         Returns:
-#             output: (batch_size, feat_dim)
-#         """
-#         token_emb = bert_output  # (batch_size, seq_length, d_model)
-#         if self.pooling == 'cls':
-#             if self.add_cls:
-#                 return self.linear(token_emb[:, 0, :])  # (batch_size, feat_dim)
-#             else:
-#                 raise ValueError('No use cls!')
-#         elif self.pooling == 'cls_before_pooler':
-#             if self.add_cls:
-#                 return token_emb[:, 0, :]  # (batch_size, feat_dim)
-#             else:
-#                 raise ValueError('No use cls!')
-#         elif self.pooling == 'mean':
-#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-#                 token_emb.size()).float()  # (batch_size, seq_length, d_model)
-#             sum_embeddings = torch.sum(token_emb * input_mask_expanded, 1)
-#             sum_mask = input_mask_expanded.sum(1)
-#             sum_mask = torch.clamp(sum_mask, min=1e-9)
-#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
-#         elif self.pooling == 'max':
-#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-#                 token_emb.size()).float()  # (batch_size, seq_length, d_model)
-#             token_emb[input_mask_expanded == 0] = float('-inf')  # Set padding tokens to large negative value
-#             max_over_time = torch.max(token_emb, 1)[0]
-#             return max_over_time  # (batch_size, feat_dim)
-#         elif self.pooling == "avg_first_last":
-#             first_hidden = hidden_states[0]  # (batch_size, seq_length, d_model)
-#             last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
-#             avg_emb = (first_hidden + last_hidden) / 2.0
-#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-#                 avg_emb.size()).float()  # (batch_size, seq_length, d_model)
-#             sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
-#             sum_mask = input_mask_expanded.sum(1)
-#             sum_mask = torch.clamp(sum_mask, min=1e-9)
-#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
-#         elif self.pooling == "avg_top2":
-#             second_last_hidden = hidden_states[-2]  # (batch_size, seq_length, d_model)
-#             last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
-#             avg_emb = (second_last_hidden + last_hidden) / 2.0
-#             input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-#                 avg_emb.size()).float()  # (batch_size, seq_length, d_model)
-#             sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
-#             sum_mask = input_mask_expanded.sum(1)
-#             sum_mask = torch.clamp(sum_mask, min=1e-9)
-#             return sum_embeddings / sum_mask  # (batch_size, feat_dim)
-#         else:
-#             raise ValueError('Error pooling type {}'.format(self.pooling))
-
-# class LinearETA(nn.Module):
-#     def __init__(self, config, data_feature):
-#         super().__init__()
-
-#         self.config = config
-
-#         self.vocab_size = data_feature.get('vocab_size')
-#         self.usr_num = data_feature.get('usr_num')
-#         self.pooling = self.config.get('pooling', 'mean')
-#         self.d_model = self.config.get('d_model', 768)
-
-#         self._logger = getLogger()
-#         self._logger.info("Building Downstream LinearETA model")
-
-#         self.model = BERTDownstream(config, data_feature)
-#         self.linear = nn.Linear(self.d_model, 1)
-
-#     def forward(self, x, padding_masks, batch_temporal_mat=None,
-#                 graph_dict=None, output_hidden_states=False, output_attentions=False):
-#         traj_emb = self.model(x=x, padding_masks=padding_masks,
-#                               batch_temporal_mat=batch_temporal_mat, graph_dict=graph_dict,
-#                               output_hidden_states=output_hidden_states,
-#                               output_attentions=output_attentions)  # (B, d_model)
-#         eta_pred = self.linear(traj_emb)  # (B, 1)
-#         return eta_pred  # (B, 1)
-
-
-# class BERTLM(nn.Module):
-
-#     def __init__(self, config, data_feature):
-#         super().__init__()
-
-#         self.config = config
-
-#         self.vocab_size = data_feature.get('vocab_size')
-#         self.usr_num = data_feature.get('usr_num')
-#         self.d_model = self.config.get('d_model', 768)
-
-#         self._logger = getLogger()
-#         self._logger.info("Building BERTLM model")
-
-#         self.bert = BERT(config, data_feature)
-
-#         # self.mask_l = MaskedLanguageModel(self.d_model, self.vocab_size)
-
-#     def forward(self, x, padding_masks, batch_temporal_mat=None,
-#                 graph_dict=None, output_hidden_states=False, output_attentions=False):
-#         """
-#         Args:
-#             x: (batch_size, seq_length, feat_dim) torch tensor of masked features (input)
-#             padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
-#         Returns:
-#             output: (batch_size, seq_length, vocab_size)
-#         """
-
-#         x, _, _ = self.bert(x=x, padding_masks=padding_masks,
-#                             batch_temporal_mat=batch_temporal_mat, graph_dict=graph_dict,
-#                             output_hidden_states=output_hidden_states,
-#                             output_attentions=output_attentions)  # (B, T, d_model)
-#         a = self.mask_l(x)
-#         return a
-
-# # 定义边的起点和终点
-# src = torch.tensor([0, 1, 2, 1, 6])
-# dst = torch.tensor([1, 2, 0, 6, 1])
-
-# g = dgl.graph((src, dst))
-# # 7为图的节点数目，1为节点特征的维度
-# n_feat = torch.randn((7, 1))
-# x = torch.tensor([[0, 1, 2, 1]])
-# x2 = torch.tensor([[0, 1, 2]])
-
-# # GraphEncoder里面有问题
-# a = RouteEmbedding(64, dropout=0.1, add_pe=True, node_fea_dim=1, add_gat=True, norm=True)
-# ans = a(x, g, n_feat)
-# ans2 = a(x2, g, n_feat)
-
-# # 因为加了positional embedding，所以结果不一样
-# print(ans)
-# print(ans2)
+    # ans = model_train(x, padding_mask, g, n_feat)
+    # print(ans)
+    # print(ans[0].shape)
