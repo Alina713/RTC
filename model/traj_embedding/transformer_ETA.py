@@ -22,6 +22,17 @@ import time
 from torch.utils.data import DataLoader
 import tqdm
 
+config0={'vocab_size': 60000, 
+        'd_model': 768, 'n_layers': 4, 
+        'attn_heads': 12, 'mlp_ratio': 4, 
+        'dropout': 0.1, 'drop_path': 0.3, 
+        'lape_dim': 256, 'attn_drop': 0.1, 
+        'type_ln': 'pre', 'future_mask': False, 
+        'device': torch.device('cuda:1'), 
+        'sample_rate': 0.2, 'add_pe': True, 
+        'padding_idx': 0, 'max_position_embedding': 512, 
+        'layer_norm_eps': 1e-5, 'padding_index': 0}
+
 def drop_path_func(x, drop_prob=0., training=False):
     """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
     """
@@ -44,87 +55,72 @@ class DropPath(nn.Module):
 
     def forward(self, x):
         return drop_path_func(x, self.drop_prob, self.training)
-
-class PositionalEmbedding(nn.Module):
-
-    def __init__(self, d_model, max_len=512):
-        super().__init__()
-        self.d_model = d_model
-        # Compute the positional encodings once in log space.
-        pe = torch.zeros(max_len, d_model).float()
-        pe.require_grad = False
-
-        position = torch.arange(0, max_len).float().unsqueeze(1)
-        div_term = (torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model)).exp()
-
-        pe[:, 0::2] = torch.sin(position * div_term)  # (max_len, d_model/2)
-        pe[:, 1::2] = torch.cos(position * div_term)  # (max_len, d_model/2)
-
-        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        """
-
-        Args:
-            x: (B, T, d_model)
-
-        Returns:
-            (1, T, d_model)
-
-        """
-        return self.pe[:, :x.size(1)].detach()
     
-        
 class BERTEmbedding(nn.Module):
-
-    def __init__(self, d_model, dropout=0.1, add_pe = True):
-        """
-
-        Args:
-            vocab_size: total vocab size
-            d_model: embedding size of token embedding
-            dropout: dropout rate
-        """
+    def __init__(self, config):
         super().__init__()
-        self.add_pe = add_pe
+        self.add_pe = config['add_pe']
+        self.token_embedding = nn.Embedding(config['vocab_size'], config['d_model'], padding_idx=config['padding_index'])
 
-        self.token_embedding = nn.Embedding(60000, d_model, padding_idx=0)
+        # position_ids (1, len position emb) is contiguous in memory and exported when serialized
+        self.register_buffer("position_ids", torch.arange(config['max_position_embedding']).expand((1, -1)))
 
-        # tmp2 = self.token_embedding.shape
+        self.padding_idx = config['padding_idx']
         if self.add_pe:
-            self.position_embedding = PositionalEmbedding(d_model=d_model)
+            self.position_embedding = nn.Embedding(config['max_position_embedding'], config['d_model'], padding_idx=config['padding_idx'])
 
-        self.dropout = nn.Dropout(p=dropout)
-        self.d_model = d_model
+        self.dropout = nn.Dropout(config['dropout'])
+        self.d_model = config['d_model']
+        self.LayerNorm = nn.LayerNorm(config['d_model'], eps=config['layer_norm_eps'])
 
-    def forward(self, sequence):
+    def create_position_ids_from_input_ids(self, input_ids, padding_idx, past_key_values_length=0):
         """
+        Replace non-padding symbols with their position numbers. Position numbers begin at padding_idx+1. Padding symbols
+        are ignored. This is modified from fairseq's `utils.make_positions`.
 
         Args:
-            sequence: (B, T, F) [loc, ts, mins, weeks, usr]
+            x: torch.Tensor x:
 
-
-        Returns:
-            (B, T, d_model)
-
+        Returns: torch.Tensor
         """
-        x = self.token_embedding(sequence)  # (B, T, d_model)
-        if self.add_pe:
-            x += self.position_embedding(x)  # (B, T, d_model)
-        return self.dropout(x)
-    
+        # The series of casts and type-conversions here are carefully balanced to both work with ONNX export and XLA.
+        mask = input_ids.ne(padding_idx).int()
+        incremental_indices = (torch.cumsum(mask, dim=1).type_as(mask) + past_key_values_length) * mask
+        return incremental_indices.long() + padding_idx
+
+    def forward(
+        self,
+        input_ids=None,
+        position_ids=None,
+        past_key_values_length=0,
+    ):
+        if position_ids is None:
+            position_ids = self.create_position_ids_from_input_ids(
+                input_ids, self.padding_idx, past_key_values_length).to(input_ids.device)
+
+        inputs_embeds = self.token_embedding(input_ids)
+
+        position_embeddings = self.position_embedding(position_ids)
+        embeddings = inputs_embeds + position_embeddings
+
+        embeddings = self.LayerNorm(embeddings)
+        embeddings = self.dropout(embeddings)
+        return embeddings
 
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, num_heads, d_model, dim_out, attn_drop=0., 
-                 proj_drop=0., device=torch.device('cuda:1')):
+    def __init__(self, num_heads, d_model, dim_out, attn_drop=0., proj_drop=0.,
+                 add_cls=True, device=torch.device('cpu'), 
+                # device = torch.device('cuda:0')
+                 ):
         super().__init__()
+
         assert d_model % num_heads == 0
 
         # We assume d_v always equals d_k
         self.d_k = d_model // num_heads
         self.num_heads = num_heads
         self.device = device
+        self.add_cls = add_cls
         self.scale = self.d_k ** -0.5  # 1/sqrt(dk)
 
         self.linear_layers = nn.ModuleList([nn.Linear(d_model, d_model) for _ in range(3)])
@@ -133,7 +129,7 @@ class MultiHeadedAttention(nn.Module):
         self.proj = nn.Linear(d_model, dim_out)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x, padding_masks, future_mask=False, output_attentions=False):
+    def forward(self, x, padding_masks, future_mask=True, output_attentions=False):
         """
 
         Args:
@@ -157,12 +153,13 @@ class MultiHeadedAttention(nn.Module):
         # 2) Apply attention on all the projected vectors in batch.
         scores = torch.matmul(query, key.transpose(-2, -1)) * self.scale  # (B, head, T, T)
 
-
         if padding_masks is not None:
             scores.masked_fill_(padding_masks == 0, float('-inf'))
 
         if future_mask:
             mask_postion = torch.triu(torch.ones((1, seq_len, seq_len)), diagonal=1).bool().to(self.device)
+            if self.add_cls:
+                mask_postion[:, 0, :] = 0
             scores.masked_fill_(mask_postion, float('-inf'))
 
         p_attn = F.softmax(scores, dim=-1)  # (B, head, T, T)
@@ -177,6 +174,7 @@ class MultiHeadedAttention(nn.Module):
             return out, p_attn  # (B, T, dim_out), (B, head, T, T)
         else:
             return out, None  # (B, T, dim_out)
+
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.1):
@@ -202,9 +200,7 @@ class Mlp(nn.Module):
         x = self.drop(x)
         x = self.fc2(x)
         x = self.drop(x)
-        return x
-
-
+        return x 
 class TransformerBlock(nn.Module):
     """
     Bidirectional Encoder = Transformer (self-attention)
@@ -212,9 +208,9 @@ class TransformerBlock(nn.Module):
     """
 
     def __init__(self, d_model, attn_heads, feed_forward_hidden, drop_path,
-                 attn_drop, dropout, type_ln='pre', device=torch.device('cuda:1')):
+                 attn_drop, dropout, type_ln='pre', add_cls=True,
+                 device=torch.device('cpu')):
         """
-
         Args:
             d_model: hidden size of transformer
             attn_heads: head sizes of multi-head attention
@@ -227,7 +223,8 @@ class TransformerBlock(nn.Module):
 
         super().__init__()
         self.attention = MultiHeadedAttention(num_heads=attn_heads, d_model=d_model, dim_out=d_model,
-                                              attn_drop=attn_drop, proj_drop=dropout, device=device)
+                                              attn_drop=attn_drop, proj_drop=dropout, add_cls=add_cls,
+                                              device=device)
         self.mlp = Mlp(in_features=d_model, hidden_features=feed_forward_hidden,
                        out_features=d_model, act_layer=nn.GELU, drop=dropout)
         self.norm1 = nn.LayerNorm(d_model)
@@ -235,18 +232,15 @@ class TransformerBlock(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.type_ln = type_ln
 
-    def forward(self, x, padding_masks, future_mask=False, output_attentions=False):
+    def forward(self, x, padding_masks, future_mask=True, output_attentions=False):
         """
-
         Args:
             x: (B, T, d_model)
             padding_masks: (B, 1, T, T)
             future_mask: True/False
             batch_temporal_mat: (B, T, T)
-
         Returns:
             (B, T, d_model)
-
         """
         if self.type_ln == 'pre':
             attn_out, attn_score = self.attention(self.norm1(x), padding_masks=padding_masks,
@@ -261,7 +255,6 @@ class TransformerBlock(nn.Module):
         else:
             raise ValueError('Error type_ln {}'.format(self.type_ln))
         return x, attn_score
-    
 
 class BERT(nn.Module):
     """
@@ -295,8 +288,7 @@ class BERT(nn.Module):
         self.feed_forward_hidden = self.d_model * self.mlp_ratio
 
         # embedding for BERT, sum of ... embeddings
-        self.embedding = BERTEmbedding(d_model=self.d_model, dropout=self.dropout, 
-                                       add_pe=self.add_pe)
+        self.embedding = BERTEmbedding(self.config)
 
         # multi-layers transformer blocks, deep network
         enc_dpr = [x.item() for x in torch.linspace(0, self.drop_path, self.n_layers)]  # stochastic depth decay rule
@@ -318,7 +310,7 @@ class BERT(nn.Module):
             output: (batch_size, seq_length, feat_dim)
         """
         # embedding the indexed sequence to sequence of vectors
-        embedding_output = self.embedding(sequence=x)  # (B, T, d_model)
+        embedding_output = self.embedding(input_ids=x)  # (B, T, d_model)
 
         padding_masks_input = padding_masks.unsqueeze(1).repeat(1, x.size(1), 1).unsqueeze(1)  # (B, 1, T, T)
         # running over multiple transformer blocks
@@ -422,7 +414,7 @@ class TransformerTimePred(nn.Module):
     def __init__(self, hidden_size=768):
         super(TransformerTimePred, self).__init__()
         self.hidden_size = hidden_size
-        self.route_embeddings = BERT(config={'key': 'value'})
+        self.route_embeddings = BERT(config0)
         self.time_mapping = nn.Linear(hidden_size,1)
 
     def forward(self, route_input, travel_time):
@@ -460,7 +452,7 @@ class TransformerTimePred_train():
 
         self.eta_model = TransformerTimePred().cuda(1)
         # set learning_rate
-        self.optimizer = torch.optim.Adam(self.eta_model.parameters(), lr=2e-4)
+        self.optimizer = torch.optim.Adam(self.eta_model.parameters(), lr=5e-5)
 
         self.min_dict = {}
         self.min_dict['min_valid_mape'] = 1e18
@@ -543,14 +535,9 @@ class TransformerTimePred_train():
 
         return avg_mape / avg_cnt, avg_mae / avg_cnt
 
-
 if __name__ == '__main__':
-    # model = BERT(config={'key': 'value'})
-    # # 查看model中的参数名称
-    # for name, param in model.named_parameters():
-    #     print(name)
     model_train = TransformerTimePred_train()
-    num_epochs = 10 # 训练轮数
+    num_epochs = 20 # 训练轮数
     print('Training Start')
     for epoch in range(num_epochs):
         print ('epoch: ',epoch)
