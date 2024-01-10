@@ -1,9 +1,12 @@
+# 2024.01.09 16:00
 # to test the validation of transformer enocoder for ETA prediction
 # import dgl
 import torch
+torch.cuda.empty_cache()
+
 import torch.nn as nn
 import torch.nn.functional as F
-import transformers
+# import transformers
 
 import math
 import numpy as np
@@ -22,16 +25,17 @@ from torch.utils.data import DataLoader
 import tqdm
 
 config0={'vocab_size': 60000, 
-        'd_model': 768, 'n_layers': 12, 
+        'd_model': 768, 'n_layers': 2, 
         'attn_heads': 12, 'mlp_ratio': 4, 
         'dropout': 0.1, 'drop_path': 0.3, 
         'lape_dim': 256, 'attn_drop': 0.1, 
         'type_ln': 'pre', 'future_mask': False, 
-        'device': torch.device('cuda:1'), 
+        'device': torch.device('cuda:0'), 
         'sample_rate': 0.2, 'add_pe': True, 
-        'padding_idx': 0, 'max_position_embedding': 512, 
-        'layer_norm_eps': 1e-5, 'padding_index': 0, 
-        'add_cls': True}
+        'padding_idx': 0, 'max_position_embedding': 1024, 
+        'layer_norm_eps': 1e-6, 'padding_index': 0, 
+        'add_cls': True, 
+        'cls_idx': 57255, 'sep_idx': 57256}
     
 class BERTEmbedding(nn.Module):
     def __init__(self, config):
@@ -43,6 +47,8 @@ class BERTEmbedding(nn.Module):
         self.register_buffer("position_ids", torch.arange(config['max_position_embedding']).expand((1, -1)))
 
         self.padding_idx = config['padding_idx']
+        self.cls_idx = config['cls_idx']
+        self.sep_idx = config['sep_idx']
         if self.add_pe:
             self.position_embedding = nn.Embedding(config['max_position_embedding'], config['d_model'], padding_idx=config['padding_idx'])
 
@@ -50,7 +56,7 @@ class BERTEmbedding(nn.Module):
         self.d_model = config['d_model']
         self.LayerNorm = nn.LayerNorm(config['d_model'], eps=config['layer_norm_eps'])
 
-    def create_position_ids_from_input_ids(self, input_ids, padding_idx, past_key_values_length=0):
+    def create_position_ids_from_input_ids(self, input_ids, padding_idx, cls_idx = 57255, sep_idx = 57256, past_key_values_length=0):
         """
         Replace non-padding symbols with their position numbers. Position numbers begin at padding_idx+1. Padding symbols
         are ignored. This is modified from fairseq's `utils.make_positions`.
@@ -61,9 +67,20 @@ class BERTEmbedding(nn.Module):
         Returns: torch.Tensor
         """
         # The series of casts and type-conversions here are carefully balanced to both work with ONNX export and XLA.
-        mask = input_ids.ne(padding_idx).int()
+        # 将input_ids去掉头尾元素
+        mask_pad = (input_ids.ne(padding_idx)).int()
+        mask_cls = (input_ids.ne(cls_idx)).int()
+        mask_sep = (input_ids.ne(sep_idx)).int()
+        mask = mask_pad & mask_cls & mask_sep
+        # trick Shanghai
+        cls_indices = torch.where(input_ids.eq(cls_idx), 511, 0)
+        sep_indices = torch.where(input_ids.eq(sep_idx), 512, 0)
+
         incremental_indices = (torch.cumsum(mask, dim=1).type_as(mask) + past_key_values_length) * mask
-        return incremental_indices.long() + padding_idx
+
+        pids = incremental_indices.long() + cls_indices + sep_indices + padding_idx
+        
+        return pids
 
     def forward(
         self,
@@ -73,11 +90,12 @@ class BERTEmbedding(nn.Module):
     ):
         if position_ids is None:
             position_ids = self.create_position_ids_from_input_ids(
-                input_ids, self.padding_idx, past_key_values_length).to(input_ids.device)
+                input_ids, self.padding_idx).to(input_ids.device)
+
 
         inputs_embeds = self.token_embedding(input_ids)
-
         position_embeddings = self.position_embedding(position_ids)
+
         embeddings = inputs_embeds + position_embeddings
 
         embeddings = self.LayerNorm(embeddings)
@@ -93,20 +111,21 @@ class TransformerTimePred(nn.Module):
         self.route_embeddings = BERTEmbedding(config)
         self.time_mapping = nn.Linear(config['d_model'],1)
         self.model = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=config['d_model'], 
-                                                                      nhead=config['attn_heads']), num_layers=config['n_layers'])
+                                                                      nhead=config['attn_heads'], 
+                                                                      dropout=0.1), 
+                                                                      num_layers=config['n_layers'])
 
     def forward(self, route_input, travel_time):
-        route_input = route_input.long().cuda(1)
+        route_input = route_input.long().cuda()
         route_input_embeds = self.route_embeddings(route_input)
-        travel_time = travel_time.cuda(1)
+        route_input_embeds = self.model(route_input_embeds)
+        travel_time = travel_time.cuda()
 
         route_time_pred = self.time_mapping(route_input_embeds).squeeze(-1)
-        # print(route_time_pred.sum(1))
-        # print(travel_time)
 
         mape_loss = torch.abs(route_time_pred.sum(1) - travel_time) / (travel_time + 1e-9)
         mae_loss = torch.abs(route_time_pred.sum(1) - travel_time)
-        # print(self.route_embeddings.weight.data[0])
+
         return mape_loss.mean(), mae_loss.mean()
     
 
@@ -155,6 +174,9 @@ class ETADataset:
 
     def __getitem__(self, index):
         route = self.route_list[index]
+        # add cls & sep 
+        # trick for ShangHai
+        route = [57255] + route + [57256]
         travel_time = self.time_list[index]
 
         return torch.tensor(route), travel_time
@@ -187,9 +209,9 @@ class TransformerTimePred_train():
                                     pin_memory=True)
 
 
-        self.eta_model = TransformerTimePred(config0).cuda(1)
+        self.eta_model = TransformerTimePred(config0).cuda()
         # set learning_rate
-        self.optimizer = torch.optim.Adam(self.eta_model.parameters(), lr=2e-4)
+        self.optimizer = torch.optim.Adam(self.eta_model.parameters(), lr= 5e-5)
 
         self.min_dict = {}
         self.min_dict['min_valid_mape'] = 1e18
