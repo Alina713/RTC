@@ -25,7 +25,7 @@ from torch.utils.data import DataLoader
 import tqdm
 
 config0={'vocab_size': 60000, 
-        'd_model': 768, 'n_layers': 2, 
+        'd_model': 768, 'n_layers': 1, 
         'attn_heads': 12, 'mlp_ratio': 4, 
         'dropout': 0.1, 'drop_path': 0.3, 
         'lape_dim': 256, 'attn_drop': 0.1, 
@@ -42,7 +42,7 @@ class BERTEmbedding(nn.Module):
         super().__init__()
         self.add_pe = config['add_pe']
         self.token_embedding = nn.Embedding(config['vocab_size'], config['d_model'], padding_idx=config['padding_index'])
-
+        self.geo_embedding = LatLongEmbedding(2, config['d_model'])
         # position_ids (1, len position emb) is contiguous in memory and exported when serialized
         self.register_buffer("position_ids", torch.arange(config['max_position_embedding']).expand((1, -1)))
 
@@ -81,10 +81,31 @@ class BERTEmbedding(nn.Module):
         pids = incremental_indices.long() + cls_indices + sep_indices + padding_idx
         
         return pids
+    
+    def create_latlong_embedding_from_input_ids(self, input_ids, geo_dict):
+        '''
+        input_ids: [batch_size, seq_len]
+        geo_dict: [[lat, long]...[lat, long]]
+        '''
+        geo_list = []
+        for batch in input_ids:
+            geo_list_batch = []
+            for node_id in batch:
+                if (node_id.item() == self.cls_idx 
+                    or node_id.item() == self.sep_idx
+                    or node_id.item() == self.padding_idx):
+                    geo_list_batch.append([0, 0])
+                else:
+                    geo_list_batch.append(geo_dict[int(node_id)])
+            geo_list.append(geo_list_batch)
+        geo_info = torch.tensor(geo_list)
+
+        return geo_info
 
     def forward(
         self,
         input_ids=None,
+        geo_dict=None,
         position_ids=None,
         past_key_values_length=0,
     ):
@@ -95,8 +116,13 @@ class BERTEmbedding(nn.Module):
 
         inputs_embeds = self.token_embedding(input_ids)
         position_embeddings = self.position_embedding(position_ids)
+        geo_info = self.create_latlong_embedding_from_input_ids(
+            input_ids, geo_dict).to(input_ids.device)
+        
+        geo_embeddings = self.geo_embedding(geo_info)
 
         embeddings = inputs_embeds + position_embeddings
+        embeddings = embeddings + geo_embeddings
 
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
@@ -115,9 +141,10 @@ class TransformerTimePred(nn.Module):
                                                                       dropout=0.1), 
                                                                       num_layers=config['n_layers'])
 
-    def forward(self, route_input, travel_time):
+    def forward(self, route_input, travel_time, geo_dict):
         route_input = route_input.long().cuda()
-        route_input_embeds = self.route_embeddings(route_input)
+        geo_dict = geo_dict.cuda()
+        route_input_embeds = self.route_embeddings(route_input, geo_dict)
         route_input_embeds = self.model(route_input_embeds)
         travel_time = travel_time.cuda()
 
@@ -128,7 +155,49 @@ class TransformerTimePred(nn.Module):
 
         return mape_loss.mean(), mae_loss.mean()
     
+class LatLongEmbedding(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(LatLongEmbedding, self).__init__()
+        self.fc = nn.Linear(input_dim, output_dim)
 
+    def forward(self, x):
+        return self.fc(x)
+    
+# 读取/nas/user/wyh/dataset/roadnet/Shanghai/nodeOSM.txt文件
+# 读取txt文件，返回一个字典，key为node_id，value为经纬度
+def read_nodeOSM(path):
+    node_dict = {}
+    minlat = 1e18
+    minlon = 1e18
+    maxlat = -1e18
+    maxlon = -1e18
+    with open(path, 'r') as f:
+        for line in f.readlines():
+            line = line.strip('\n').split('\t')
+            node_dict[int(line[0])] = [float(line[1]), float(line[2])]
+            minlat = min(minlat, float(line[1]))
+            minlon = min(minlon, float(line[2]))
+            maxlat = max(maxlat, float(line[1]))
+            maxlon = max(maxlon, float(line[2]))
+    return node_dict, minlat, minlon, maxlat, maxlon
+
+# 将经纬度进行归一化作为embedding
+def normalize_latlong(node_dict, minlat, minlon, maxlat, maxlon):
+    for key in node_dict.keys():
+        node_dict[key][0] = (node_dict[key][0] - minlat) / (maxlat - minlat)
+        node_dict[key][1] = (node_dict[key][1] - minlon) / (maxlon - minlon)
+    return node_dict
+
+
+geo_info = read_nodeOSM('/nas/user/wyh/dataset/roadnet/Shanghai/nodeOSM.txt')
+geo_dict = geo_info[0]
+minlat = geo_info[1]
+minlon = geo_info[2]
+maxlat = geo_info[3]
+maxlon = geo_info[4]
+geo_dict = normalize_latlong(geo_dict, minlat, minlon, maxlat, maxlon)
+# 保留geo_dict的value部分。并保存为list
+geo_dict = list(geo_dict.values())
 
 '''
 训练部分
@@ -167,9 +236,10 @@ for x in test_time_data:
 
 
 class ETADataset:
-    def __init__(self, route_data, time_data):
+    def __init__(self, route_data, time_data, geo_dict):
         self.route_list = route_data
         self.time_list = time_data
+        self.geo_dict = geo_dict
         self.dataLen = len(self.route_list)
 
     def __getitem__(self, index):
@@ -178,8 +248,9 @@ class ETADataset:
         # trick for ShangHai
         route = [57255] + route + [57256]
         travel_time = self.time_list[index]
+        geo_dict = self.geo_dict
 
-        return torch.tensor(route), travel_time
+        return torch.tensor(route), travel_time, geo_dict
 
 
     def __len__(self):
@@ -188,25 +259,23 @@ class ETADataset:
     def collate_fn(self, data):
         route = [item[0] for item in data]
         travel_time = [item[1] for item in data]
+        geo_dict = data[0][2]
 
         route = pad_sequence(route, padding_value=0, batch_first=True)
 
-        return route, torch.tensor(travel_time)
+        return route, torch.tensor(travel_time), torch.tensor(geo_dict)
 
 class TransformerTimePred_train():
     def __init__(self):
-        train_dataset = ETADataset(route_data = train_trajectory_data, time_data = train_times_data)
-        valid_dataset = ETADataset(route_data = valid_trajectory_data, time_data = valid_times_data)
-        test_dataset = ETADataset(route_data = test_trajectory_data, time_data = test_times_data)
+        train_dataset = ETADataset(route_data = train_trajectory_data, time_data = train_times_data, geo_dict = geo_dict)
+        valid_dataset = ETADataset(route_data = valid_trajectory_data, time_data = valid_times_data, geo_dict = geo_dict)
+        test_dataset = ETADataset(route_data = test_trajectory_data, time_data = test_times_data, geo_dict = geo_dict)
         self.train_loader = DataLoader(train_dataset, batch_size=32,
-                                    collate_fn=train_dataset.collate_fn,
-                                    pin_memory=True)
+                                    collate_fn=train_dataset.collate_fn)
         self.valid_loader = DataLoader(valid_dataset, batch_size=32,
-                                    collate_fn=valid_dataset.collate_fn,
-                                    pin_memory=True)
+                                    collate_fn=valid_dataset.collate_fn)
         self.test_loader = DataLoader(test_dataset, batch_size=32,
-                                    collate_fn=test_dataset.collate_fn,
-                                    pin_memory=True)
+                                    collate_fn=test_dataset.collate_fn)
 
 
         self.eta_model = TransformerTimePred(config0).cuda()
