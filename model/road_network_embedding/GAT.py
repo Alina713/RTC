@@ -1,9 +1,10 @@
-#!/usr/bin/env python
-# encoding: utf-8
-# File Name: gcn.py
-# Author: Jiezhong Qiu
-# Create Time: 2019/12/13 15:38
-# TODO:
+import sys
+import os
+sys.path.append("/nas/user/wyh/TNC/")
+sys.path.append("/nas/user/wyh/TNC/model/road_network_embedding/")
+from pybind.test_funcs import Map
+
+import torch.optim as optim
 
 import dgl
 import torch
@@ -18,83 +19,119 @@ import numpy as np
 import copy
 import random
 from logging import getLogger
+import pandas as pd
+import os
+import tqdm
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
+from torch.utils.data import DataLoader
+
+# pos_emb [CLS] 1 2 3 4 5 [SEP]
+# nn.embedding(130,768)
+# layoutLM
+# token_emb [CLS] 14 12 34 55 67 [SEP]
+# nn.embedding(max_token_num + 2,768)
+
+config0={'vocab_size': 60000, 
+        'd_model': 768, 'g_n_layers': 2, 'n_layers': 12,
+        'attn_heads': 12, 'mlp_ratio': 4, 
+        'dropout': 0.1, 'drop_path': 0.3, 
+        'lape_dim': 256, 'attn_drop': 0.1, 
+        'type_ln': 'pre', 'future_mask': False, 
+        'device': torch.device('cuda:1'), 
+        'sample_rate': 0.2, 'add_pe': True, 
+        'padding_idx': 0, 'max_position_embedding': 1024, 
+        'layer_norm_eps': 1e-6, 'padding_index': 0, 
+        'add_cls': True, 
+        'cls_idx': 57255, 'sep_idx': 57256, 
+        'node_input_dim': 2}
+
+# 读取/nas/user/wyh/dataset/roadnet/Shanghai/nodeOSM.txt文件
+# 读取txt文件，返回一个字典，key为node_id，value为经纬度
+def read_nodeOSM(path):
+    node_dict = {}
+    minlat = 1e18
+    minlon = 1e18
+    maxlat = -1e18
+    maxlon = -1e18
+    with open(path, 'r') as f:
+        for line in f.readlines():
+            line = line.strip('\n').split('\t')
+            node_dict[int(line[0])] = [float(line[1]), float(line[2])]
+            minlat = min(minlat, float(line[1]))
+            minlon = min(minlon, float(line[2]))
+            maxlat = max(maxlat, float(line[1]))
+            maxlon = max(maxlon, float(line[2]))
+    return node_dict, minlat, minlon, maxlat, maxlon
+
+# 将经纬度进行归一化作为embedding
+def normalize_latlong(node_dict, minlat, minlon, maxlat, maxlon):
+    for key in node_dict.keys():
+        node_dict[key][0] = (node_dict[key][0] - minlat) / (maxlat - minlat)
+        node_dict[key][1] = (node_dict[key][1] - minlon) / (maxlon - minlon)
+    return node_dict
+
+SH_map = Map("/nas/user/wyh/dataset/roadnet/Shanghai", zone_range=[31.17491, 121.439492, 31.305073, 121.507001])
+dgl_SH_map = SH_map.dgl_valid_map()
 
 
-def drop_path_func(x, drop_prob=0., training=False):
-    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
-    """
-    if drop_prob == 0. or not training:
-        return x
-    keep_prob = 1 - drop_prob
-    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
-    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
-    random_tensor.floor_()  # binarize
-    output = x.div(keep_prob) * random_tensor
-    return output
+geo_info = read_nodeOSM('/nas/user/wyh/dataset/roadnet/Shanghai/nodeOSM.txt')
+geo_dict = geo_info[0]
+minlat = geo_info[1]
+minlon = geo_info[2]
+maxlat = geo_info[3]
+maxlon = geo_info[4]
+geo_dict = normalize_latlong(geo_dict, minlat, minlon, maxlat, maxlon)
+# 保留geo_dict的value部分。并保存为list
+geo_dict = list(geo_dict.values())
+k = dgl_SH_map.number_of_nodes()
+geo_dict = geo_dict[:k]
+# 将tmp_n_feat转换为tensor
+tmp_n_feat = torch.tensor(geo_dict).float()
+
+'''
+加载数据集
+'''
+# 数据预处理
+train_data = pd.read_csv("/nas/user/wyh/TNC/data/ETA/GAT_transformer/SHmap_norm_train.csv", sep=';', header=0)
+valid_data = pd.read_csv("/nas/user/wyh/TNC/data/ETA/GAT_transformer/SHmap_norm_valid.csv", sep=';', header=0)
+test_data = pd.read_csv("/nas/user/wyh/TNC/data/ETA/GAT_transformer/SHmap_norm_test.csv", sep=';', header=0)
 
 
-class DropPath(nn.Module):
-    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
-    """
-    def __init__(self, drop_prob=None):
-        super(DropPath, self).__init__()
-        self.drop_prob = drop_prob
+# 删去-999的情况
+train_trajectory_data = [[int(y) for y in x.strip('[]').split(',') if int(y) != -999] for x in train_data.iloc[:,1].values]
+train_trajectory_data = [x for x in train_trajectory_data if -999 not in x]
+train_time_data = [list(map(int, x.strip('[]').split(','))) for x in train_data.iloc[:, 2].values]
+# 有-999的情况出现
+train_times_data = []
+for x in train_time_data:
+    train_times_data.append(x[-1]-x[0])
 
-    def forward(self, x):
-        return drop_path_func(x, self.drop_prob, self.training)
+# valid_trajectory_data = [list(map(int, x.strip('[]').split(','))) for x in valid_data.iloc[:,1].values]
+valid_trajectory_data = [[int(y) for y in x.strip('[]').split(',') if int(y) != -999] for x in valid_data.iloc[:,1].values]
+valid_trajectory_data = [x for x in valid_trajectory_data if -999 not in x]
+valid_time_data = [list(map(int, x.strip('[]').split(','))) for x in valid_data.iloc[:, 2].values]
+valid_times_data = []
+for x in valid_time_data:
+    valid_times_data.append(x[-1]-x[0])
 
-class PositionalEmbedding(nn.Module):
-
-    def __init__(self, d_model, max_len=512):
-        super().__init__()
-        self.d_model = d_model
-        # Compute the positional encodings once in log space.
-        pe = torch.zeros(max_len, d_model).float()
-        pe.require_grad = False
-
-        position = torch.arange(0, max_len).float().unsqueeze(1)
-        div_term = (torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model)).exp()
-
-        pe[:, 0::2] = torch.sin(position * div_term)  # (max_len, d_model/2)
-        pe[:, 1::2] = torch.cos(position * div_term)  # (max_len, d_model/2)
-
-        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x, position_ids=None):
-        """
-
-        Args:
-            x: (B, T, d_model)
-            position_ids: (B, T) or None
-
-        Returns:
-            (1, T, d_model) / (B, T, d_model)
-
-        """
-        if position_ids is None:
-            return self.pe[:, :x.size(1)].detach()
-        else:
-            batch_size, seq_len = position_ids.shape
-            pe = self.pe[:, :seq_len, :]  # (1, T, d_model)
-            pe = pe.expand((position_ids.shape[0], -1, -1))  # (B, T, d_model)
-            pe = pe.reshape(-1, self.d_model)  # (B * T, d_model)
-            position_ids = position_ids.reshape(-1, 1).squeeze(1)  # (B * T,)
-            output_pe = pe[position_ids].reshape(batch_size, seq_len, self.d_model).detach()
-            return output_pe
+# test_trajectory_data = [list(map(int, x.strip('[]').split(','))) for x in test_data.iloc[:,1].values]
+test_trajectory_data = [[int(y) for y in x.strip('[]').split(',') if int(y) != -999] for x in test_data.iloc[:,1].values]
+test_trajectory_data = [x for x in test_trajectory_data if -999 not in x]
+test_time_data = [list(map(int, x.strip('[]').split(','))) for x in test_data.iloc[:, 2].values]
+test_times_data = []
+for x in test_time_data:
+    test_times_data.append(x[-1]-x[0])
 
 
-class UnsupervisedGAT(nn.Module):
+class GAT(nn.Module):
     def __init__(
-        self, node_input_dim, node_hidden_dim, edge_input_dim, num_layers, num_heads
+        self, node_input_dim, node_hidden_dim, num_layers, num_heads
     ):
-        super(UnsupervisedGAT, self).__init__()
+        super(GAT, self).__init__()
         assert node_hidden_dim % num_heads == 0
-        # self.in_dims = [node_input_dim if i == 0 else node_hidden_dim for i in range(num_layers)]
         self.layers = nn.ModuleList(
             [
                 GATConv(
-                    # in_feats=self.in_dims[i],
                     in_feats=node_input_dim if i == 0 else node_hidden_dim,
                     out_feats=node_hidden_dim // num_heads,
                     num_heads=num_heads,
@@ -102,7 +139,6 @@ class UnsupervisedGAT(nn.Module):
                     attn_drop=0.6,
                     residual=True,
                     activation=F.leaky_relu if i + 1 < num_layers else None,
-                    # activation = nn.ELU() if i + 1 < num_layers else None,
                     # 允许路口编号不连续
                     allow_zero_in_degree=True,
                 )
@@ -110,501 +146,285 @@ class UnsupervisedGAT(nn.Module):
             ]
         )
 
-    def forward(self, g, n_feat, e_feat = None):
+    def forward(self, g, n_feat):
         num_nodes = n_feat.size(0)
         for i, layer in enumerate(self.layers):
             n_feat = layer(g, n_feat)
             n_feat = n_feat.reshape(num_nodes, -1)
-
         return n_feat
 
 
 # 标准化GAT
 class GraphEncoder(nn.Module):
-    def __init__(
-        self, feature_dim, node_input_dim, node_hidden_dim, output_dim, 
-        edge_input_dim=0, num_layers=2, num_heads=8, norm=True
-    ):
+    def __init__(self, node_input_dim, node_hidden_dim, 
+                 num_layers, num_heads, norm=True):
         super(GraphEncoder, self).__init__()
         self.d_model = node_hidden_dim
 
-        self.gnn = UnsupervisedGAT(
+        self.gnn = GAT(
             node_input_dim=node_input_dim,
             node_hidden_dim=node_hidden_dim,
-            edge_input_dim=edge_input_dim,
             num_layers=num_layers,
             num_heads=num_heads,
         )
         self.norm = norm
-        self.projection = nn.Sequential(nn.Linear(node_hidden_dim, node_hidden_dim),
-                                        nn.ReLU(),
-                                        nn.Linear(node_hidden_dim, output_dim))
-        
-        # g的number_of_nodes()是路口的数量 57254
-        self.fea_encoder = nn.Embedding(57254, node_input_dim)
 
     def forward(self, g, n_feat, x):
-        '''
-        x为轨迹序列 [rn_id1, rn_id2, rn_id3, ...]
-        Args:
-            g: dgl format of Map
-            * ShangHai
-            node_features: (vocab_size, fea_dim)
-            * ShangHai (57254, 1)
-            x: (B, T)
-            * ShangHai (64,Sequence length)
-        Returns:
-            (B, T, d_model)
-        '''
-        n_feat = self.fea_encoder(n_feat)
-
-        e_feat = None
-        v = self.gnn(g, n_feat, e_feat)
-        ab = v.shape
+        v = self.gnn(g, n_feat)
         if self.norm:
             v = F.normalize(v, p=2, dim=-1, eps=1e-5)
 
-        # 感觉是归一化转接头， 暂时注释
-        # v = self.projection(v) # (vocab_size, d_model)
-
         batch_size, seq_len = x.shape
-        v = v.unsqueeze(0)  # (1, vocab_size, d_model)
-        v = v.expand(batch_size, -1, -1)  # (B, vocab_size, d_model)
-        v = v.reshape(-1, self.d_model)  # (B * vocab_size, d_model)
+        # v = v.unsqueeze(0)  # (1, vocab_size, d_model)
+        # v = v.expand(batch_size, -1, -1)  # (B, vocab_size, d_model)
+        # v = v.reshape(-1, self.d_model)  # (B * vocab_size, d_model)
         x = x.reshape(-1, 1).squeeze(1)  # (B * T,)
 
         out_node_fea_emb = v[x].reshape(batch_size, seq_len, self.d_model)  # (B, T, d_model)
         return out_node_fea_emb  # (B, T, d_model)
 
-class RouteEmbedding(nn.Module):
-
-    def __init__(self, d_model, dropout=0.1, 
-                 add_pe=True, node_fea_dim = 1, add_gat=True, norm = True):
-        """
-        Args:
-            vocab_size: total vocab size
-            d_model: embedding size of token embedding
-            dropout: dropout rate
-        """
+class trajEmbedding(nn.Module):
+    def __init__(self, config):
         super().__init__()
-        self.add_pe = add_pe
-        self.add_gat = add_gat
+        self.add_pe = config['add_pe']
+        self.d_model = config['d_model']
 
-        if self.add_gat:
-            self.token_embedding = GraphEncoder(feature_dim=node_fea_dim, node_input_dim=64, node_hidden_dim=d_model,
-                                                output_dim=d_model, edge_input_dim=0, num_layers=2, num_heads=8, norm=norm)
+        # position_ids (1, len position emb) is contiguous in memory and exported when serialized
+        self.register_buffer("position_ids", torch.arange(config['max_position_embedding']).expand((1, -1)))
+
+        self.padding_idx = config['padding_idx']
+
         if self.add_pe:
-            self.position_embedding = PositionalEmbedding(d_model=d_model)
-        self.dropout = nn.Dropout(p=dropout)
-        self.d_model = d_model
+            self.position_embedding = nn.Embedding(config['max_position_embedding'], config['d_model'], padding_idx=config['padding_idx'])
 
-    def forward(self, sequence, g, n_feat, position_ids=None):
+        self.token_embedding = nn.Embedding(config['vocab_size'], config['d_model'], padding_idx=config['padding_index'])
+        self.model = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=config['d_model'], 
+                                                                      nhead=config['attn_heads'], 
+                                                                      dropout=0.1), 
+                                                                      num_layers=config['n_layers'])
+
+        self.dropout = nn.Dropout(config['dropout'])
+        self.LayerNorm = nn.LayerNorm(config['d_model'], eps=config['layer_norm_eps'])
+
+    def create_position_ids_from_input_ids(self, input_ids, padding_idx, past_key_values_length=0):
         """
-        Args:
-            sequence: (B, T, F) [loc, ts, mins, weeks, usr]
-            position_ids: (B, T) or None
-            graph_dict(dict): including:
-                in_lap_mx: (vocab_size, lap_dim)
-                out_lap_mx: (vocab_size, lap_dim)
-                indegree: (vocab_size, )
-                outdegree: (vocab_size, )
-        Returns:
-            (B, T, d_model)
-        """
-        if self.add_gat:
-            x = self.token_embedding(g, n_feat, sequence)  # (B, T, d_model)
-        if self.add_pe:
-            x += self.position_embedding(x, position_ids)  # (B, T, d_model)
-        return self.dropout(x)
-
-# 以上可以得到一个batch中的positional embedding + token embedding
-# size: (B, T, d_model)
-
-class MultiHeadedAttention(nn.Module):
-    def __init__(self, num_heads, d_model, dim_out, attn_drop=0., proj_drop=0.,
-                 add_cls=True, device=torch.device('cpu'), 
-                # device = torch.device('cuda:0')
-                 ):
-        super().__init__()
-
-        assert d_model % num_heads == 0
-
-        # We assume d_v always equals d_k
-        self.d_k = d_model // num_heads
-        self.num_heads = num_heads
-        self.device = device
-        self.add_cls = add_cls
-        self.scale = self.d_k ** -0.5  # 1/sqrt(dk)
-
-        self.linear_layers = nn.ModuleList([nn.Linear(d_model, d_model) for _ in range(3)])
-        self.dropout = nn.Dropout(p=attn_drop)
-
-        self.proj = nn.Linear(d_model, dim_out)
-        self.proj_drop = nn.Dropout(proj_drop)
-
-    def forward(self, x, padding_masks, future_mask=True, output_attentions=False):
-        """
+        Replace non-padding symbols with their position numbers. Position numbers begin at padding_idx+1. Padding symbols
+        are ignored. This is modified from fairseq's `utils.make_positions`.
 
         Args:
-            x: (B, T, d_model)
-            padding_masks: (B, 1, T, T) padding_mask
-            future_mask: True/False
-            batch_temporal_mat: (B, T, T)
+            x: torch.Tensor x:
 
-        Returns:
-
+        Returns: torch.Tensor
         """
-        batch_size, seq_len, d_model = x.shape
+        # The series of casts and type-conversions here are carefully balanced to both work with ONNX export and XLA.
+        # 将input_ids去掉头尾元素
+        mask = (input_ids.ne(padding_idx)).int()
 
-        # 1) Do all the linear projections in batch from d_model => h x d_k
-        # l(x) --> (B, T, d_model)
-        # l(x).view() --> (B, T, head, d_k)
-        query, key, value = [l(x).view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
-                             for l, x in zip(self.linear_layers, (x, x, x))]
-        # q, k, v --> (B, head, T, d_k)
+        incremental_indices = (torch.cumsum(mask, dim=1).type_as(mask) + past_key_values_length) * mask
 
-        # 2) Apply attention on all the projected vectors in batch.
-        scores = torch.matmul(query, key.transpose(-2, -1)) * self.scale  # (B, head, T, T)
+        pids = incremental_indices.long() + padding_idx
+        
+        return pids
 
-        if padding_masks is not None:
-            scores.masked_fill_(padding_masks == 0, float('-inf'))
+    def forward(
+        self,
+        input_ids=None,
+        position_ids=None,
+        past_key_values_length=0,
+    ):
+        if position_ids is None:
+            position_ids = self.create_position_ids_from_input_ids(
+                input_ids, self.padding_idx).to(input_ids.device)
 
-        if future_mask:
-            mask_postion = torch.triu(torch.ones((1, seq_len, seq_len)), diagonal=1).bool().to(self.device)
-            if self.add_cls:
-                mask_postion[:, 0, :] = 0
-            scores.masked_fill_(mask_postion, float('-inf'))
+        # inputs_embeds = self.token_embedding(input_ids)
+        inputs_embeds = self.token_embedding(input_ids)
+        position_embeddings = self.position_embedding(position_ids)
 
-        p_attn = F.softmax(scores, dim=-1)  # (B, head, T, T)
-        p_attn = self.dropout(p_attn)
-        out = torch.matmul(p_attn, value)  # (B, head, T, d_k)
+        embeddings = inputs_embeds + position_embeddings
 
-        # 3) "Concat" using a view and apply a final linear.
-        out = out.transpose(1, 2).contiguous().view(batch_size, -1, self.num_heads * self.d_k)  # (B, T, d_model)
-        out = self.proj(out)  # (B, T, N, D)
-        out = self.proj_drop(out)
-        if output_attentions:
-            return out, p_attn  # (B, T, dim_out), (B, head, T, T)
-        else:
-            return out, None  # (B, T, dim_out)
+        # 交换embeddings的第一维和第二维
+        embeddings = embeddings.transpose(0, 1)
 
+        embeddings = self.model(embeddings)
 
-class Mlp(nn.Module):
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.1):
-        """Position-wise Feed-Forward Networks
-        Args:
-            in_features:
-            hidden_features:
-            out_features:
-            act_layer:
-            drop:
-        """
-        super().__init__()
-        out_features = out_features or in_features
-        hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop)
+        embeddings = self.LayerNorm(embeddings)
+        embeddings = self.dropout(embeddings)
 
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
-        x = self.drop(x)
-        x = self.fc2(x)
-        x = self.drop(x)
-        return x
+        embeddings = embeddings.transpose(0, 1)
+        return embeddings
 
 
-class TransformerBlock(nn.Module):
-    """
-    Bidirectional Encoder = Transformer (self-attention)
-    Transformer = MultiHead_Attention + Feed_Forward with sublayer connection
-    """
+class TransformerTimePred(nn.Module):
 
-    def __init__(self, d_model, attn_heads, feed_forward_hidden, drop_path,
-                 attn_drop, dropout, type_ln='pre', add_cls=True,
-                 device=torch.device('cpu')):
-        """
-        Args:
-            d_model: hidden size of transformer
-            attn_heads: head sizes of multi-head attention
-            feed_forward_hidden: feed_forward_hidden, usually 4*d_model
-            drop_path: encoder dropout rate
-            attn_drop: attn dropout rate
-            dropout: dropout rate
-            type_ln:
-        """
+    def __init__(self, config):
+        super(TransformerTimePred, self).__init__()
+        self.d_model = config['d_model']
+        self.g_embeddings = GraphEncoder(node_input_dim=config['node_input_dim'],
+                                            node_hidden_dim=config['d_model'],
+                                            num_layers=config['g_n_layers'],
+                                            num_heads=config['attn_heads'])
+        
+        self.t_embeddings = trajEmbedding(config)
 
-        super().__init__()
-        self.attention = MultiHeadedAttention(num_heads=attn_heads, d_model=d_model, dim_out=d_model,
-                                              attn_drop=attn_drop, proj_drop=dropout, add_cls=add_cls,
-                                              device=device)
-        self.mlp = Mlp(in_features=d_model, hidden_features=feed_forward_hidden,
-                       out_features=d_model, act_layer=nn.GELU, drop=dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.type_ln = type_ln
+        self.time_mapping = nn.Linear(config['d_model'],1)
 
-    def forward(self, x, padding_masks, future_mask=True, output_attentions=False):
-        """
-        Args:
-            x: (B, T, d_model)
-            padding_masks: (B, 1, T, T)
-            future_mask: True/False
-            batch_temporal_mat: (B, T, T)
-        Returns:
-            (B, T, d_model)
-        """
-        if self.type_ln == 'pre':
-            attn_out, attn_score = self.attention(self.norm1(x), padding_masks=padding_masks,
-                                                  future_mask=future_mask, output_attentions=output_attentions)
-            x = x + self.drop_path(attn_out)
-            x = x + self.drop_path(self.mlp(self.norm2(x)))
-        elif self.type_ln == 'post':
-            attn_out, attn_score = self.attention(x, padding_masks=padding_masks,
-                                                  future_mask=future_mask, output_attentions=output_attentions)
-            x = self.norm1(x + self.drop_path(attn_out))
-            x = self.norm2(x + self.drop_path(self.mlp(x)))
-        else:
-            raise ValueError('Error type_ln {}'.format(self.type_ln))
-        return x, attn_score
-    
+    def forward(self, g, n_feat, route_input, travel_time):
+        g = g.to('cuda:1')
+        n_feat = n_feat.cuda(1)
+        route_input = route_input.long().cuda(1)
+        g_input_embeds = self.g_embeddings(g, n_feat, route_input)
+        t_input_embeds = self.t_embeddings(route_input)
+        route_input_embeds = g_input_embeds + t_input_embeds
+        
+        travel_time = travel_time.cuda(1)
 
-class BERT(nn.Module):
-    """
-    BERT model : Bidirectional Encoder Representations from Transformers.
-    """
+        route_time_pred = self.time_mapping(route_input_embeds).squeeze(-1)
 
-    def __init__(self, config, data_feature):
-        """
-        Args:
-        """
-        super().__init__()
+        mape_loss = torch.abs(route_time_pred.sum(1) - travel_time) / (travel_time + 1e-9)
+        mae_loss = torch.abs(route_time_pred.sum(1) - travel_time)
 
-        self.config = config
-
-        self.vocab_size = data_feature.get('vocab_size', 2)
-        # self.node_fea_dim = data_feature.get('node_fea_dim')
-        self.node_fea_dim = data_feature.get('node_fea_dim', 1)
-
-        # d_model 必须可以整除 attn_heads
-        self.d_model = self.config.get('d_model', 768)
-        self.n_layers = self.config.get('n_layers', 12)
-        self.attn_heads = self.config.get('attn_heads', 12)
-        self.mlp_ratio = self.config.get('mlp_ratio', 4)
-        self.dropout = self.config.get('dropout', 0.1)
-        self.drop_path = self.config.get('drop_path', 0.3)
-        self.lape_dim = self.config.get('lape_dim', 256)
-        self.attn_drop = self.config.get('attn_drop', 0.1)
-        # pre改为post
-        self.type_ln = self.config.get('type_ln', 'post')
-        # 如果 `add_cls` 为 `True`，则在生成 `future_mask` 时，可能会将 `[CLS]` token 对应的位置设置为 `False`，即允许模型在生成 `[CLS]` token 的输出时，
-        # 查看整个输入序列的信息。这是因为 `[CLS]` token 的输出通常被用作整个序列的聚合表示，所以需要考虑整个序列的信息。
-        # False， 改
-        self.future_mask = self.config.get('future_mask', False)
-        self.add_cls = self.config.get('add_cls', True)
-        self.device = self.config.get('device', torch.device('cuda:1'))
-        self.add_pe = self.config.get('add_pe', True)
-        self.add_gat = self.config.get('add_gat', True)
-        self.norm = self.config.get('norm', True)
-
-        # paper noted they used 4*hidden_size for ff_network_hidden_size
-        self.feed_forward_hidden = self.d_model * self.mlp_ratio
-
-        # embedding for BERT, sum of ... embeddings
-        self.embedding = RouteEmbedding(d_model=self.d_model, dropout=self.dropout,
-                                       add_pe=self.add_pe, node_fea_dim=self.node_fea_dim, add_gat=self.add_gat, norm=self.norm)
-
-        # multi-layers transformer blocks, deep network
-        enc_dpr = [x.item() for x in torch.linspace(0, self.drop_path, self.n_layers)]  # stochastic depth decay rule
-        self.transformer_blocks = nn.ModuleList(
-            [TransformerBlock(d_model=self.d_model, attn_heads=self.attn_heads,
-                              feed_forward_hidden=self.feed_forward_hidden, drop_path=enc_dpr[i],
-                              attn_drop=self.attn_drop, dropout=self.dropout,
-                              type_ln=self.type_ln, add_cls=self.add_cls,
-                              device=self.device) for i in range(self.n_layers)])
-
-
-    def forward(self, x, padding_masks, g, n_feat, 
-                output_hidden_states=False, output_attentions=False):
-        """
-        Args:
-            x: (batch_size, seq_length, feat_dim) torch tensor of masked features (input)
-            padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
-            `padding_masks`是一个形状为`(batch_size, seq_length)`的张量，其中`1`表示该位置的向量是需要保留的，`0`表示该位置是填充的。
-            g 与 n_feat对应原来的 graph_dict
-        Returns:
-            output: (batch_size, seq_length, feat_dim)
-        """
-        position_ids = None
-
-
-        # embedding the indexed sequence to sequence of vectors
-        embedding_output = self.embedding(sequence=x, g = g, n_feat = n_feat, position_ids = None)  # (B, T, d_model)
-
-
-        padding_masks_input = padding_masks.unsqueeze(1).repeat(1, x.size(1), 1).unsqueeze(1)  # (B, 1, T, T)
-        # running over multiple transformer blocks
-        all_hidden_states = [embedding_output] if output_hidden_states else None
-        all_self_attentions = [] if output_attentions else None
-        for transformer in self.transformer_blocks:
-            embedding_output, attn_score = transformer.forward(
-                x=embedding_output, padding_masks=padding_masks_input,
-                future_mask=self.future_mask, output_attentions=output_attentions)  # (B, T, d_model)
-            if output_hidden_states:
-                all_hidden_states.append(embedding_output)
-            if output_attentions:
-                all_self_attentions.append(attn_score)
-        return embedding_output, all_hidden_states, all_self_attentions  # (B, T, d_model), list of (B, T, d_model), list of (B, head, T, T)
-
-
-class MLPLayer(nn.Module):
-    """
-    服务于cls
-    Head for getting sentence representations over RoBERTa/BERT's CLS representation.
-    GitHub Copilot: 这段代码定义了一个名为`MLPLayer`的PyTorch模块，它是一个简单的多层感知机（MLP）层。
-    以下是每一行代码的解释：
-    1. `class MLPLayer(nn.Module):` 定义了一个新的类，名为`MLPLayer`，它继承自`nn.Module`。`nn.Module`是PyTorch中所有神经网络模块的基类。
-    2. `def __init__(self, d_model):` 定义了类的初始化函数，它接受一个参数`d_model`，表示输入和输出的特征维度。
-    3. `super().__init__()` 调用父类的初始化函数，这是在定义新的PyTorch模块时的标准做法。
-    4. `self.dense = nn.Linear(d_model, d_model)` 定义了一个线性层，它的输入和输出特征维度都是`d_model`。
-    5. `self.activation = nn.Tanh()` 定义了一个激活函数，这里使用的是双曲正切函数。
-    6. `def forward(self, features):` 定义了前向传播函数，它接受一个参数`features`，表示输入的特征。
-    7. `x = self.dense(features)` 将输入的特征通过线性层进行变换。
-    8. `x = self.activation(x)` 将线性层的输出通过激活函数进行变换。
-    9. `return x` 返回变换后的特征。
-    总的来说，这个`MLPLayer`模块就是一个包含一个线性层和一个激活函数的简单神经网络层，它可以将输入的特征进行一次线性变换和非线性变换。
-    """
-
-    def __init__(self, d_model):
-        super().__init__()
-        self.dense = nn.Linear(d_model, d_model)
-        self.activation = nn.Tanh()
-
-    def forward(self, features):
-        x = self.dense(features)
-        x = self.activation(x)
-        return x
-
-
-class BERTPooler(nn.Module):
-
-    def __init__(self, config, data_feature):
-        super().__init__()
-
-        self.config = config
-
-        self.pooling = self.config.get('pooling', 'mean')
-        self.add_cls = self.config.get('add_cls', True)
-        self.d_model = self.config.get('d_model', 768)
-        self.linear = MLPLayer(d_model=self.d_model)
-
-        self._logger = getLogger()
-        self._logger.info("Building BERTPooler model")
-
-    def forward(self, bert_output, padding_masks, hidden_states=None):
-        """
-        Args:
-            bert_output: (batch_size, seq_length, d_model) torch tensor of bert output
-            padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
-            hidden_states: list of hidden, (batch_size, seq_length, d_model)
-        Returns:
-            output: (batch_size, feat_dim) feat_dim一般为d_model768
-
-        1. **max**：这种策略是对每个位置的向量取最大值。首先，将填充位置的向量设置为负无穷大，然后对每个位置的向量取最大值。这种策略的假设是，
-        最大值能够捕获到最重要的信息。
-        2. **avg_first_last**：这种策略是取第一个和最后一个位置的向量的平均值。首先，计算第一个和最后一个位置的向量的平均值，然后将这个平均值与
-        一个掩码相乘，将填充位置的值设置为0，然后对每个位置的值求和，最后将和除以非填充位置的数量。这种策略的假设是，第一个和最后一个位置的向量能够捕获到整个序列的信息。
-        3. **avg_top2**：这种策略是取最后两个位置的向量的平均值。具体的操作与`avg_first_last`相同，只是取的是最后两个位置的向量的平均值。这种策略的假设是，最后两
-        个位置的向量能够捕获到整个序列的信息。
-        这三种策略的主要区别在于它们选择的位置和操作方式。具体选择哪种策略，可能需要根据你的任务和数据进行实验来确定。
-        """
-        token_emb = bert_output  # (batch_size, seq_length, d_model)
-        if self.pooling == 'cls':
-            if self.add_cls:
-                return self.linear(token_emb[:, 0, :])  # (batch_size, feat_dim)
-            else:
-                raise ValueError('No use cls!')
-        elif self.pooling == 'cls_before_pooler':
-            if self.add_cls:
-                return token_emb[:, 0, :]  # (batch_size, feat_dim)
-            else:
-                raise ValueError('No use cls!')
-        elif self.pooling == 'mean':
-            input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-                token_emb.size()).float()  # (batch_size, seq_length, d_model)
-            sum_embeddings = torch.sum(token_emb * input_mask_expanded, 1)
-            sum_mask = input_mask_expanded.sum(1)
-            sum_mask = torch.clamp(sum_mask, min=1e-9)
-            return sum_embeddings / sum_mask  # (batch_size, feat_dim)
-        elif self.pooling == 'max':
-            input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-                token_emb.size()).float()  # (batch_size, seq_length, d_model)
-            token_emb[input_mask_expanded == 0] = float('-inf')  # Set padding tokens to large negative value
-            max_over_time = torch.max(token_emb, 1)[0]
-            return max_over_time  # (batch_size, feat_dim)
-        elif self.pooling == "avg_first_last":
-            first_hidden = hidden_states[0]  # (batch_size, seq_length, d_model)
-            last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
-            avg_emb = (first_hidden + last_hidden) / 2.0
-            input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-                avg_emb.size()).float()  # (batch_size, seq_length, d_model)
-            sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
-            sum_mask = input_mask_expanded.sum(1)
-            sum_mask = torch.clamp(sum_mask, min=1e-9)
-            return sum_embeddings / sum_mask  # (batch_size, feat_dim)
-        elif self.pooling == "avg_top2":
-            second_last_hidden = hidden_states[-2]  # (batch_size, seq_length, d_model)
-            last_hidden = hidden_states[-1]  # (batch_size, seq_length, d_model)
-            avg_emb = (second_last_hidden + last_hidden) / 2.0
-            input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-                avg_emb.size()).float()  # (batch_size, seq_length, d_model)
-            sum_embeddings = torch.sum(avg_emb * input_mask_expanded, 1)
-            sum_mask = input_mask_expanded.sum(1)
-            sum_mask = torch.clamp(sum_mask, min=1e-9)
-            return sum_embeddings / sum_mask  # (batch_size, feat_dim)
-        elif self.pooling == "all":
-            input_mask_expanded = padding_masks.unsqueeze(-1).expand(
-                token_emb.size()).float()  # (batch_size, seq_length, d_model)
-            sum_embeddings = torch.sum(token_emb * input_mask_expanded, 1)
-            return sum_embeddings  # (batch_size, feat_dim)
-        else:
-            raise ValueError('Error pooling type {}'.format(self.pooling))
+        return mape_loss.mean(), mae_loss.mean()
 
 
 
-def get_padding_mask(time_series, pad_value=0):
-    """
-    根据时间序列获取padding mask。
+class ETADataset:
+    def __init__(self, g, n_feat, route_data, time_data):
+        self.g = g
+        self.n_feat = n_feat
+        self.route_list = route_data
+        self.time_list = time_data
+        self.dataLen = len(self.route_list)
 
-    参数:
-        time_series (np.array): 时间序列，假设填充值为0
-        pad_value (int): 填充值，默认为0
+    def __getitem__(self, index):
+        g = self.g
+        n_feat = self.n_feat
+        route = self.route_list[index]
+        route = route
+        travel_time = self.time_list[index]
 
-    返回:
-        np.array: padding mask，和时间序列形状相同，填充位置为False，非填充位置为True
-    """
-    return time_series != pad_value
+        return g, n_feat, torch.tensor(route), travel_time
 
+
+    def __len__(self):
+        return self.dataLen
+
+    def collate_fn(self, data):
+        g = data[0][0]
+        n_feat = data[0][1]
+        route = [item[2] for item in data]
+        travel_time = [item[3] for item in data]
+
+        route = pad_sequence(route, padding_value=0, batch_first=True)
+
+        return g, n_feat, route, torch.tensor(travel_time)
+
+class TransformerTimePred_train():
+    def __init__(self):
+        train_dataset = ETADataset(g = dgl_SH_map, n_feat = tmp_n_feat, 
+                                   route_data = train_trajectory_data, time_data = train_times_data)
+        valid_dataset = ETADataset(g = dgl_SH_map, n_feat = tmp_n_feat, 
+                                   route_data = valid_trajectory_data, time_data = valid_times_data)
+        test_dataset = ETADataset(g = dgl_SH_map, n_feat = tmp_n_feat, 
+                                  route_data = test_trajectory_data, time_data = test_times_data)
+        self.train_loader = DataLoader(train_dataset, batch_size=32,
+                                    collate_fn=train_dataset.collate_fn)
+        self.valid_loader = DataLoader(valid_dataset, batch_size=32,
+                                    collate_fn=valid_dataset.collate_fn)
+        self.test_loader = DataLoader(test_dataset, batch_size=32,
+                                    collate_fn=test_dataset.collate_fn)
+
+
+        self.eta_model = TransformerTimePred(config0).cuda(1)
+        # set learning_rate
+        self.optimizer = torch.optim.Adam(self.eta_model.parameters(), lr= 5e-5)
+
+        self.min_dict = {}
+        self.min_dict['min_valid_mape'] = 1e18
+        self.min_dict['min_valid_mae'] = 1e18
+
+
+    def train(self):
+        self.eta_model.train()
+        iter = 0
+        for input in tqdm.tqdm(self.train_loader):
+            mape_loss, mae_loss = self.eta_model(*input)
+            self.optimizer.zero_grad()
+            mape_loss.backward()
+            self.optimizer.step()
+            # print(f"Train mape_Loss: {mape_loss.item():.4f}, Train mae_loss: {mae_loss.item():.4f}")
+            if ((iter + 1) % 100 == 0):
+                valid_mape, valid_mae = self.valid()
+                if self.min_dict['min_valid_mape'] > valid_mape:
+                    self.min_dict['min_valid_mape'] = valid_mape
+                    self.min_dict['min_valid_mae'] = valid_mae
+                    if not os.path.exists('/nas/user/wyh/TNC/model/eta_data/'):
+                        os.mkdir('/nas/user/wyh/TNC/model/eta_data/')
+                    torch.save({
+                        'model': self.eta_model.state_dict(),
+                        'best_loss': valid_mape,
+                        'opt': self.optimizer,
+                    }, '/nas/user/wyh/TNC/model/eta_data/gat_model.pth.tar')
+
+                self.eta_model.train()
+            if (iter + 1) % 100 == 0:
+                print('mape: ', mape_loss.item(), 'mae: ', mae_loss.item(), 'valid mape: ', self.min_dict['min_valid_mape'], ' valid mae: ',self.min_dict['min_valid_mae'])
+            iter += 1
+
+    def valid(self):
+        with torch.no_grad():
+            self.eta_model.eval()
+            avg_mape = 0
+            avg_mae = 0
+            avg_cnt = 0
+            for input in tqdm.tqdm(self.valid_loader):
+                mape, mae = self.eta_model(*input)
+                # trick-1: 去除异常值
+                if mape.item() > 2:
+                    continue
+                else:
+                    avg_mape += mape.item()
+                    avg_mae += mae.item()
+                    avg_cnt += 1
+                # avg_mape += mape.item()
+                # avg_mae += mae.item()
+                # avg_cnt += 1
+
+            print ('valid mape: ', avg_mape / avg_cnt, ' valid mae: ',avg_mae / avg_cnt)
+        return avg_mape / avg_cnt, avg_mae / avg_cnt
+
+
+    def test(self):
+        checkpoint = torch.load('/nas/user/wyh/TNC/model/eta_data/gat_model.pth.tar')
+        self.eta_model.load_state_dict(checkpoint['model'])
+
+        with torch.no_grad():
+            self.eta_model.eval()
+            avg_mape = 0
+            avg_mae = 0
+            avg_cnt = 0
+            for input in tqdm.tqdm(self.test_loader):
+                mape, mae = self.eta_model(*input)
+                # trick-1: 去除异常值
+                if mape.item() > 2:
+                    continue
+                else:
+                    avg_mape += mape.item()
+                    avg_mae += mae.item()
+                    avg_cnt += 1
+                # avg_mape += mape.item()
+                # avg_mae += mae.item()
+                # avg_cnt += 1
+
+                print('test mape: ', avg_mape / avg_cnt, ' test mae: ', avg_mae / avg_cnt)
+
+        return avg_mape / avg_cnt, avg_mae / avg_cnt
 
 if __name__ == '__main__':
-    src = torch.tensor([3, 1, 2, 1, 6])
-    dst = torch.tensor([1, 2, 3, 6, 1])
-    g = dgl.graph((src, dst))
-    n_feat = torch.randn((7, 1))
-    x = torch.tensor([[2, 6, 3, 1, 0], [1, 2, 1, 0, 0]])
-    model = UnsupervisedGAT(node_input_dim=1, node_hidden_dim=16, edge_input_dim=0, num_layers=2, num_heads=8)
-    ans = model(g, n_feat)
-    print(ans.shape)
-    print(ans)
-    # config = {'key': 'value'}
-    # data_feature = {'key': 'value'}
-    # model_train = BERT(config, data_feature)
+    model_train = TransformerTimePred_train()
+    num_epochs = 10 # 训练轮数
+    print('Training Start')
+    for epoch in range(num_epochs):
+        print ('epoch: ',epoch)
+        model_train.train()
 
-    # padding_mask = get_padding_mask(x)
-
-    # ans = model_train(x, padding_mask, g, n_feat)
-    # print(ans)
-    # print(ans[0].shape)
+    model_train.test()
